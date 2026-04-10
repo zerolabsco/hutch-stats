@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from sqlalchemy import JSON, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
+
+from srht_contrib.db import Base
+
+
+class ContributionEvent(Base):
+    __tablename__ = "contribution_events"
+    __table_args__ = (
+        UniqueConstraint("service", "external_uid", name="uq_contribution_event_service_uid"),
+        Index("ix_contribution_events_actor_occurred_at", "actor", "occurred_at"),
+        Index("ix_contribution_events_service_occurred_at", "service", "occurred_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    service: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    repo_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    resource_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    external_uid: Mapped[str] = mapped_column(String(255), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    weight: Mapped[float] = mapped_column(Float, nullable=False)
+    raw_payload_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class SyncState(Base):
+    __tablename__ = "sync_states"
+    __table_args__ = (UniqueConstraint("service", "actor", name="uq_sync_state_service_actor"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    service: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    cursor_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TrackedRepository(Base):
+    __tablename__ = "tracked_repositories"
+    __table_args__ = (
+        UniqueConstraint("service", "actor", "repo_name", name="uq_tracked_repository_service_actor_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    service: Mapped[str] = mapped_column(String(32), nullable=False)
+    repo_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class ActorAlias(Base):
+    __tablename__ = "actor_aliases"
+    __table_args__ = (UniqueConstraint("alias", name="uq_actor_alias_alias"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    canonical_actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    alias: Mapped[str] = mapped_column(String(255), nullable=False)
