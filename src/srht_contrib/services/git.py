@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import logging
@@ -131,7 +132,7 @@ class GitIngestionService:
             "current_repository": None,
         }
         if cursor_state:
-            state.update(cursor_state)
+            state.update(copy.deepcopy(cursor_state))
 
         if not state["discovery_complete"]:
             data = self.client.execute(

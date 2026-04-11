@@ -83,6 +83,52 @@ class BackfillingTodoService:
         return BackfillBatchResult(events=[event], cursor_state=None, complete=True)
 
 
+class QueueShrinkingTodoService:
+    service_name = "todo"
+
+    def fetch_recent_events(self, actor: str, since: datetime | None = None) -> TodoPollResult:
+        return TodoPollResult(events=[], cursor=datetime(2026, 3, 31, tzinfo=UTC).isoformat())
+
+    def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
+        import copy
+
+        state = {"tracker_queue": ["t1", "t2"], "current_tracker": None, "current_ticket": None, "trackers_loaded": True, "trackers_cursor": None}
+        if cursor_state:
+            state.update(copy.deepcopy(cursor_state))
+        if not state["tracker_queue"]:
+            return BackfillBatchResult(events=[], cursor_state=None, complete=True)
+        state["tracker_queue"].pop(0)
+        return BackfillBatchResult(events=[], cursor_state=state, complete=False)
+
+
+class QueueShrinkingGitService:
+    service_name = "git"
+
+    def __init__(self) -> None:
+        self.settings = Settings(
+            SRHT_TOKEN="x",
+            DATABASE_URL="sqlite://",
+            DEFAULT_ACTOR="~ccleberg",
+            TODO_SRHT_ENDPOINT="https://todo.sr.ht/query",
+            GIT_SRHT_ENDPOINT="https://git.sr.ht/query",
+            POLL_INTERVAL_SECONDS=60,
+        )
+
+    def fetch_recent_events(self, actor: str, since: datetime | None = None, repositories=None) -> GitPollResult:
+        return GitPollResult(events=[], cursor=datetime(2026, 3, 31, tzinfo=UTC).isoformat())
+
+    def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
+        import copy
+
+        state = {"repository_queue": ["r1", "r2"], "current_repository": None, "discovery_complete": True, "discovery_cursor": None}
+        if cursor_state:
+            state.update(copy.deepcopy(cursor_state))
+        if not state["repository_queue"]:
+            return BackfillBatchResult(events=[], cursor_state=None, complete=True)
+        state["repository_queue"].pop(0)
+        return BackfillBatchResult(events=[], cursor_state=state, complete=False)
+
+
 def make_settings(**overrides) -> Settings:
     values = {
         "API_KEY": "test-api-key",
@@ -470,3 +516,28 @@ def test_poll_marks_backfill_complete_and_persists_service_state(db_session) -> 
     assert tracked_actor.backfill_completed_at is not None
     assert [state.service for state in service_states] == ["git", "todo"]
     assert all(state.status == "completed" for state in service_states)
+
+
+def test_backfill_cursor_state_shrinks_across_repeated_polls(db_session) -> None:
+    poller = PollerService(todo_service=QueueShrinkingTodoService(), git_service=QueueShrinkingGitService())
+
+    poller.poll_all(db_session, "~ccleberg")
+    first_states = {
+        state.service: state.cursor_json
+        for state in db_session.scalars(
+            select(ServiceBackfillState).where(ServiceBackfillState.actor == "~ccleberg")
+        ).all()
+    }
+
+    poller.poll_all(db_session, "~ccleberg")
+    second_states = {
+        state.service: state.cursor_json
+        for state in db_session.scalars(
+            select(ServiceBackfillState).where(ServiceBackfillState.actor == "~ccleberg")
+        ).all()
+    }
+
+    assert first_states["git"]["repository_queue"] == ["r2"]
+    assert first_states["todo"]["tracker_queue"] == ["t2"]
+    assert second_states["git"]["repository_queue"] == []
+    assert second_states["todo"]["tracker_queue"] == []

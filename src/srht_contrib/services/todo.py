@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import logging
@@ -303,7 +304,7 @@ class TodoIngestionService:
             "trackers_loaded": False,
         }
         if cursor_state:
-            state.update(cursor_state)
+            state.update(copy.deepcopy(cursor_state))
 
         if not state["trackers_loaded"]:
             data = self.client.execute(TODO_TRACKERS_QUERY, {"cursor": state["trackers_cursor"]})

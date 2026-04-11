@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -224,7 +225,7 @@ class PollerService:
                 result = fetcher(actor=actor, cursor_state=state.cursor_json)
                 inserted = self._insert_events(db, result.events)
                 total_inserted += inserted
-                state.cursor_json = result.cursor_state
+                state.cursor_json = copy.deepcopy(result.cursor_state)
                 state.last_error = None
                 state.updated_at = datetime.now(tz=UTC)
                 if result.complete:
