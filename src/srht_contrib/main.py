@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
@@ -19,6 +20,9 @@ from srht_contrib.services.git import GitIngestionService
 from srht_contrib.services.srht_client import SourceHutGraphQLClient
 from srht_contrib.services.todo import TodoIngestionService
 from srht_contrib.utils.identity import ActorIdentityResolver
+
+
+logger = logging.getLogger(__name__)
 
 
 def build_poller(settings: Settings) -> PollerService:
@@ -68,6 +72,7 @@ def create_app(
                 replace_existing=True,
             )
             scheduler.start()
+            _run_startup_poll(app)
         app.state.scheduler = scheduler
         try:
             yield
@@ -94,6 +99,13 @@ def _scheduled_poll(app: FastAPI) -> None:
         poller.poll_tracked_actors(db, settings.default_actor)
     finally:
         db.close()
+
+
+def _run_startup_poll(app: FastAPI) -> None:
+    try:
+        _scheduled_poll(app)
+    except Exception:
+        logger.exception("Initial scheduled poll failed during application startup")
 
 
 app = create_app()
