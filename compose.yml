@@ -2,12 +2,12 @@ services:
   hutch-stats:
     build:
       context: .
-    container_name: hutch-stats
+    container_name: ${COMPOSE_PROJECT_NAME:-hutch-stats}
     ports:
-      - "8000:8000"
+      - "${HOST_PORT:-8000}:8000"
     environment:
       API_KEY: ${API_KEY}
-      ENABLE_SCHEDULER: "true"
+      ENABLE_SCHEDULER: ${ENABLE_SCHEDULER:-false}
       SRHT_TOKEN: ${SRHT_TOKEN}
       TODO_SRHT_ENDPOINT: ${TODO_SRHT_ENDPOINT:-https://todo.sr.ht/query}
       GIT_SRHT_ENDPOINT: ${GIT_SRHT_ENDPOINT:-https://git.sr.ht/query}

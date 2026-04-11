@@ -95,10 +95,10 @@ SRHT_TOKEN=replace-me
 TODO_SRHT_ENDPOINT=https://todo.sr.ht/query
 GIT_SRHT_ENDPOINT=https://git.sr.ht/query
 DATABASE_URL=sqlite:///./srht_contrib.db
-DEFAULT_ACTOR=~ccleberg
+DEFAULT_ACTOR=~your-user
 POLL_INTERVAL_SECONDS=900
-ACTOR_ALIASES_JSON={"~ccleberg":["cmc@example.com","Chris Cleberg"]}
-GIT_TRACKED_REPOSITORIES=["Hutch","~ccleberg/cleberg.net"]
+ACTOR_ALIASES_JSON={"~your-user":["you@example.com","Your Name"]}
+GIT_TRACKED_REPOSITORIES=["your-repo","~your-user/your-site"]
 ```
 
 ## Local Run Instructions
@@ -151,7 +151,7 @@ uvicorn srht_contrib.main:app --reload
 Manual polling is exposed as an API endpoint:
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/api/contributions/poll?actor=~ccleberg" \
+curl -X POST "http://127.0.0.1:8000/api/contributions/poll?actor=~your-user" \
   -H "X-API-Key: replace-me"
 ```
 
@@ -159,7 +159,7 @@ Example response:
 
 ```json
 {
-  "actor": "~ccleberg",
+  "actor": "~your-user",
   "inserted_events": 3,
   "services": ["todo", "git"]
 }
@@ -170,7 +170,7 @@ Scheduled polling only runs when `ENABLE_SCHEDULER=true` and uses `DEFAULT_ACTOR
 For `git.sr.ht`, tracked repositories are configured via `GIT_TRACKED_REPOSITORIES`. Entries may be either:
 
 - `"Hutch"` for a repository owned by `DEFAULT_ACTOR`
-- `"~ccleberg/cleberg.net"` for an explicit owner/repository pair
+- `"~your-user/your-site"` for an explicit owner/repository pair
 
 ## API Endpoints
 
@@ -189,20 +189,20 @@ Response:
 ### Contribution Calendar by Year
 
 ```bash
-curl "http://127.0.0.1:8000/api/contributions/~ccleberg?year=2026"
+curl "http://127.0.0.1:8000/api/contributions/~your-user?year=2026"
 ```
 
 ### Contribution Calendar by Date Range
 
 ```bash
-curl "http://127.0.0.1:8000/api/contributions/~ccleberg?from=2026-01-01&to=2026-03-30"
+curl "http://127.0.0.1:8000/api/contributions/~your-user?from=2026-01-01&to=2026-03-30"
 ```
 
 Example response:
 
 ```json
 {
-  "actor": "~ccleberg",
+  "actor": "~your-user",
   "from": "2026-01-01",
   "to": "2026-03-30",
   "days": [
@@ -216,14 +216,14 @@ Example response:
 ### Contribution Stats
 
 ```bash
-curl "http://127.0.0.1:8000/api/contributions/~ccleberg/stats?year=2026"
+curl "http://127.0.0.1:8000/api/contributions/~your-user/stats?year=2026"
 ```
 
 Example response:
 
 ```json
 {
-  "actor": "~ccleberg",
+  "actor": "~your-user",
   "from": "2026-01-01",
   "to": "2026-12-31",
   "total_events": 42,
@@ -239,7 +239,7 @@ Example response:
 List tracked repositories:
 
 ```bash
-curl "http://127.0.0.1:8000/api/repositories?actor=~ccleberg" \
+curl "http://127.0.0.1:8000/api/repositories?actor=~your-user" \
   -H "X-API-Key: replace-me"
 ```
 
@@ -249,7 +249,7 @@ Create a tracked repository:
 curl -X POST "http://127.0.0.1:8000/api/repositories" \
   -H "X-API-Key: replace-me" \
   -H "Content-Type: application/json" \
-  -d '{"actor":"~ccleberg","repo_name":"Hutch"}'
+  -d '{"actor":"~your-user","repo_name":"your-repo"}'
 ```
 
 Get, update, and delete a tracked repository:
@@ -261,7 +261,7 @@ curl "http://127.0.0.1:8000/api/repositories/1" \
 curl -X PATCH "http://127.0.0.1:8000/api/repositories/1" \
   -H "X-API-Key: replace-me" \
   -H "Content-Type: application/json" \
-  -d '{"repo_name":"~ccleberg/cleberg.net"}'
+  -d '{"repo_name":"~your-user/your-site"}'
 
 curl -X DELETE "http://127.0.0.1:8000/api/repositories/1" \
   -H "X-API-Key: replace-me"
@@ -315,6 +315,12 @@ The SourceHut-specific assumptions are isolated to the service modules:
 - scheduled polling runs in-process, so it is not a distributed scheduler
 - alias management is config-driven; there is no alias CRUD API yet
 - current deployment model is trusted-operator V1, not a public multi-tenant service
+
+## Deployment Notes
+
+- Add a `.dockerignore` when building container images so local secrets and SQLite files are never sent to the build context.
+- For production, prefer exposing the service behind a reverse proxy instead of publishing the application port directly to the internet.
+- Set `ENABLE_SCHEDULER=true` only for single-instance deployments where this service should own polling.
 
 ## Recommended Next Steps
 
