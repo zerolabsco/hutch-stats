@@ -1,9 +1,10 @@
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from srht_contrib.main import create_app
-from srht_contrib.models import ContributionEvent
+from srht_contrib.models import ContributionEvent, TrackedActor
 
 
 def test_read_only_contribution_routes_are_public_and_write_routes_require_api_key(settings, db_engine, session_factory) -> None:
@@ -45,11 +46,27 @@ def test_contributions_api_returns_zero_filled_range(client: TestClient, db_sess
     response = client.get("/api/contributions/~ccleberg?from=2026-03-28&to=2026-03-30")
 
     assert response.status_code == 200
+    assert response.json()["is_indexed"] is True
+    assert response.json()["indexing_state"] == "indexed"
     assert response.json()["days"] == [
         {"date": "2026-03-28", "count": 0, "score": 0.0},
         {"date": "2026-03-29", "count": 0, "score": 0.0},
         {"date": "2026-03-30", "count": 1, "score": 1.0},
     ]
+
+
+def test_public_read_registers_actor_for_lazy_indexing(client: TestClient, db_session) -> None:
+    response = client.get("/api/contributions/~ccleberg?from=2026-03-28&to=2026-03-30")
+
+    tracked_actor = db_session.scalar(select(TrackedActor).where(TrackedActor.actor == "~ccleberg"))
+
+    assert response.status_code == 200
+    assert response.json()["is_indexed"] is False
+    assert response.json()["indexing_state"] == "pending"
+    assert response.json()["last_polled_at"] is None
+    assert tracked_actor is not None
+    assert tracked_actor.is_active is True
+    assert tracked_actor.last_requested_at is not None
 
 
 def test_contribution_stats_api(client: TestClient, db_session) -> None:
@@ -88,6 +105,8 @@ def test_contribution_stats_api(client: TestClient, db_session) -> None:
     assert response.json()["total_score"] == 1.5
     assert response.json()["longest_streak"] == 2
     assert response.json()["current_streak"] == 2
+    assert response.json()["is_indexed"] is True
+    assert response.json()["indexing_state"] == "indexed"
 
 
 def test_invalid_date_input_returns_400(client: TestClient) -> None:

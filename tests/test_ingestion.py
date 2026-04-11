@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from srht_contrib.config import Settings
 from srht_contrib.jobs.poller import PollerService
-from srht_contrib.models import SyncState, TrackedRepository
+from srht_contrib.models import SyncState, TrackedActor, TrackedRepository
 from srht_contrib.schemas import NormalizedEvent
 from srht_contrib.services.git import GitIngestionService, GitPollResult
 from srht_contrib.services.todo import TodoIngestionService, TodoPollResult
@@ -335,3 +335,31 @@ def test_sync_overlap_reuses_cursor_window_and_suppresses_duplicates(db_session)
     assert state is not None
     assert len(todo_service.calls) == 2
     assert todo_service.calls[1].isoformat() == "2026-03-30T00:00:00+00:00"
+
+
+def test_scheduled_poll_polls_known_actors_and_seeds_default_actor(db_session) -> None:
+    event = NormalizedEvent(
+        service="todo",
+        event_type="ticket_created",
+        actor="~known",
+        repo_name="todo",
+        resource_id="123",
+        external_uid="todo:event:known:created:123",
+        occurred_at=datetime(2026, 3, 30, 10, 0, tzinfo=UTC),
+        weight=1.0,
+        raw_payload_json=None,
+    )
+    todo_service = RecordingTodoService(events_by_call=[[], [event]])
+    poller = PollerService(todo_service=todo_service, git_service=EmptyGitService())
+
+    db_session.add(TrackedActor(actor="~known", is_active=True))
+    db_session.commit()
+
+    results = poller.poll_tracked_actors(db_session, default_actor="~default")
+
+    tracked_actors = db_session.scalars(select(TrackedActor).order_by(TrackedActor.actor)).all()
+
+    assert results == {"~default": 0, "~known": 1}
+    assert [actor.actor for actor in tracked_actors] == ["~default", "~known"]
+    assert all(actor.last_poll_status == "indexed" for actor in tracked_actors)
+    assert all(actor.last_polled_at is not None for actor in tracked_actors)

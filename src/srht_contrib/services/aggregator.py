@@ -6,8 +6,13 @@ from datetime import date
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from srht_contrib.models import ContributionEvent
-from srht_contrib.schemas import ContributionCalendarResponse, ContributionDay, ContributionStatsResponse
+from srht_contrib.models import ContributionEvent, TrackedActor
+from srht_contrib.schemas import (
+    ContributionCalendarResponse,
+    ContributionDay,
+    ContributionIndexMetadata,
+    ContributionStatsResponse,
+)
 from srht_contrib.utils.dates import date_range, date_to_utc_bounds
 
 
@@ -30,7 +35,14 @@ class ContributionAggregator:
             )
             for day in date_range(start, end)
         ]
-        return ContributionCalendarResponse(actor=actor, from_date=start, to_date=end, days=days)
+        metadata = self._index_metadata(db, actor)
+        return ContributionCalendarResponse(
+            actor=actor,
+            from_date=start,
+            to_date=end,
+            days=days,
+            **metadata.model_dump(),
+        )
 
     def build_stats(self, db: Session, actor: str, start: date, end: date) -> ContributionStatsResponse:
         calendar = self.build_calendar(db, actor, start, end)
@@ -47,6 +59,28 @@ class ContributionAggregator:
             active_days=len(active_days),
             longest_streak=max(streaks, default=0),
             current_streak=current_streak,
+            is_indexed=calendar.is_indexed,
+            last_polled_at=calendar.last_polled_at,
+            indexing_state=calendar.indexing_state,
+        )
+
+    def _index_metadata(self, db: Session, actor: str) -> ContributionIndexMetadata:
+        tracked_actor = db.scalar(select(TrackedActor).where(TrackedActor.actor == actor))
+        has_indexed_events = db.scalar(select(ContributionEvent.id).where(ContributionEvent.actor == actor).limit(1)) is not None
+        last_poll_status = tracked_actor.last_poll_status if tracked_actor is not None else None
+        is_indexed = has_indexed_events or (tracked_actor is not None and tracked_actor.last_polled_at is not None)
+
+        if last_poll_status == "error":
+            indexing_state = "error"
+        elif is_indexed:
+            indexing_state = "indexed"
+        else:
+            indexing_state = "pending"
+
+        return ContributionIndexMetadata(
+            is_indexed=is_indexed,
+            last_polled_at=tracked_actor.last_polled_at if tracked_actor is not None else None,
+            indexing_state=indexing_state,
         )
 
     def _query_daily_aggregates(self, db: Session, actor: str, start: date, end: date) -> list[DailyAggregate]:

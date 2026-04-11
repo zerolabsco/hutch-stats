@@ -7,9 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from srht_contrib.models import ContributionEvent, SyncState, TrackedRepository
+from srht_contrib.models import ContributionEvent, SyncState, TrackedActor, TrackedRepository
 from srht_contrib.schemas import NormalizedEvent
 from srht_contrib.services.git import GitIngestionService
+from srht_contrib.services.srht_client import SourceHutClientError
 from srht_contrib.services.todo import TodoIngestionService
 from srht_contrib.utils.repositories import canonicalize_repository_name
 
@@ -24,6 +25,52 @@ class PollerService:
         self.git_service = git_service
 
     def poll_all(self, db: Session, actor: str) -> int:
+        self.track_actor_request(db, actor, update_last_requested=False)
+        try:
+            inserted = self._poll_actor(db, actor)
+        except Exception as exc:
+            db.rollback()
+            self._update_tracked_actor_poll_state(db, actor, status="error", error=str(exc))
+            db.commit()
+            raise
+
+        self._update_tracked_actor_poll_state(db, actor, status="indexed", error=None)
+        db.commit()
+        return inserted
+
+    def poll_tracked_actors(self, db: Session, default_actor: str | None = None) -> dict[str, int]:
+        if default_actor:
+            self.track_actor_request(db, default_actor, update_last_requested=False)
+            db.commit()
+
+        results: dict[str, int] = {}
+        actors = db.scalars(
+            select(TrackedActor.actor)
+            .where(TrackedActor.is_active.is_(True))
+            .order_by(TrackedActor.last_requested_at.is_(None), TrackedActor.last_requested_at.desc(), TrackedActor.actor)
+        ).all()
+        for actor in actors:
+            try:
+                results[actor] = self.poll_all(db, actor)
+            except SourceHutClientError:
+                logger.exception("Scheduled poll failed for actor=%s", actor)
+            except Exception:
+                logger.exception("Unexpected scheduled poll failure for actor=%s", actor)
+        return results
+
+    def track_actor_request(self, db: Session, actor: str, *, update_last_requested: bool = True) -> TrackedActor:
+        tracked_actor = db.scalar(select(TrackedActor).where(TrackedActor.actor == actor))
+        if tracked_actor is None:
+            tracked_actor = TrackedActor(actor=actor, is_active=True)
+            db.add(tracked_actor)
+
+        tracked_actor.is_active = True
+        if update_last_requested:
+            tracked_actor.last_requested_at = datetime.now(tz=UTC)
+        db.flush()
+        return tracked_actor
+
+    def _poll_actor(self, db: Session, actor: str) -> int:
         inserted = 0
         inserted += self._poll_service(db, actor, self.todo_service.service_name, self.todo_service.fetch_recent_events)
         self._sync_tracked_repositories(db, actor)
@@ -38,7 +85,6 @@ class PollerService:
                 repositories=git_repositories,
             ),
         )
-        db.commit()
         return inserted
 
     def _poll_service(self, db: Session, actor: str, service_name: str, fetcher) -> int:
@@ -117,3 +163,12 @@ class PollerService:
             .order_by(TrackedRepository.repo_name)
         ).all()
         return list(rows)
+
+    def _update_tracked_actor_poll_state(self, db: Session, actor: str, status: str, error: str | None) -> None:
+        tracked_actor = self.track_actor_request(db, actor, update_last_requested=False)
+        tracked_actor.last_poll_status = status
+        tracked_actor.last_poll_error = error
+        if status == "indexed":
+            tracked_actor.last_polled_at = datetime.now(tz=UTC)
+        db.add(tracked_actor)
+        db.flush()

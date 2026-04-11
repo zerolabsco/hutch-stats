@@ -1,10 +1,11 @@
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from srht_contrib.config import Settings
 from srht_contrib.main import create_app
-from srht_contrib.models import ContributionEvent
+from srht_contrib.models import ContributionEvent, TrackedActor
 from srht_contrib.services.srht_client import SourceHutClientError
 
 
@@ -18,6 +19,16 @@ class InsertingPoller:
         service = type("Service", (), {"client": _Closable()})()
         self.todo_service = service
         self.git_service = service
+
+    def track_actor_request(self, db, actor: str, *, update_last_requested: bool = True):
+        tracked_actor = db.scalar(select(TrackedActor).where(TrackedActor.actor == actor))
+        if tracked_actor is None:
+            tracked_actor = TrackedActor(actor=actor, is_active=True)
+            db.add(tracked_actor)
+        if update_last_requested:
+            tracked_actor.last_requested_at = datetime(2026, 3, 30, 9, 0, tzinfo=UTC)
+        db.flush()
+        return tracked_actor
 
     def poll_all(self, db, actor: str) -> int:
         db.add(
@@ -43,6 +54,14 @@ class FailingPoller:
         self.todo_service = service
         self.git_service = service
 
+    def track_actor_request(self, db, actor: str, *, update_last_requested: bool = True):
+        tracked_actor = db.scalar(select(TrackedActor).where(TrackedActor.actor == actor))
+        if tracked_actor is None:
+            tracked_actor = TrackedActor(actor=actor, is_active=True)
+            db.add(tracked_actor)
+        db.flush()
+        return tracked_actor
+
     def poll_all(self, db, actor: str) -> int:
         raise SourceHutClientError("boom")
 
@@ -58,6 +77,7 @@ def test_manual_poll_uses_same_database_session(settings: Settings, db_engine, s
     assert poll_response.status_code == 200
     assert poll_response.json()["inserted_events"] == 1
     assert calendar_response.status_code == 200
+    assert calendar_response.json()["is_indexed"] is True
     assert calendar_response.json()["days"] == [{"date": "2026-03-30", "count": 1, "score": 1.0}]
 
 

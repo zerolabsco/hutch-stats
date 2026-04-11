@@ -91,7 +91,7 @@ def _scheduled_poll(app: FastAPI) -> None:
     session_factory: sessionmaker[Session] = app.state.session_factory
     db = session_factory()
     try:
-        poller.poll_all(db, settings.default_actor)
+        poller.poll_tracked_actors(db, settings.default_actor)
     finally:
         db.close()
 

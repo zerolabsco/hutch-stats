@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from srht_contrib.db import Base
@@ -58,3 +58,16 @@ class ActorAlias(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     canonical_actor: Mapped[str] = mapped_column(String(255), nullable=False)
     alias: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class TrackedActor(Base):
+    __tablename__ = "tracked_actors"
+    __table_args__ = (UniqueConstraint("actor", name="uq_tracked_actor_actor"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_poll_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_poll_error: Mapped[str | None] = mapped_column(Text, nullable=True)

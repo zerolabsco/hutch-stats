@@ -43,6 +43,7 @@ Dates:
 Contribution ranges:
 
 - Contribution read endpoints return zero-filled days, so clients do not need to patch missing dates.
+- Public contribution reads also register the actor for background indexing. A first lookup may therefore return an empty graph while the scheduler catches up.
 
 Repository names:
 
@@ -114,6 +115,9 @@ Response `200 OK`:
   "actor": "~your-user",
   "from": "2026-03-01",
   "to": "2026-04-15",
+  "is_indexed": false,
+  "last_polled_at": null,
+  "indexing_state": "pending",
   "days": [
     { "date": "2026-03-01", "count": 0, "score": 0.0 },
     { "date": "2026-03-02", "count": 3, "score": 2.5 }
@@ -126,6 +130,9 @@ Response fields:
 - `actor` string: canonical actor after alias resolution
 - `from` string: inclusive start date
 - `to` string: inclusive end date
+- `is_indexed` boolean: whether the service has already indexed activity for this actor
+- `last_polled_at` string or `null`: most recent successful poll time, if any
+- `indexing_state` string: one of `pending`, `indexed`, or `error`
 - `days` array:
   - `date` string `YYYY-MM-DD`
   - `count` integer contribution count for the day
@@ -174,6 +181,9 @@ Response `200 OK`:
   "actor": "~your-user",
   "from": "2026-03-01",
   "to": "2026-04-15",
+  "is_indexed": true,
+  "last_polled_at": "2026-04-11T18:05:00Z",
+  "indexing_state": "indexed",
   "total_events": 126,
   "total_score": 116.75,
   "active_days": 14,
@@ -187,6 +197,9 @@ Response fields:
 - `actor` string
 - `from` string
 - `to` string
+- `is_indexed` boolean
+- `last_polled_at` string or `null`
+- `indexing_state` string
 - `total_events` integer
 - `total_score` float
 - `active_days` integer

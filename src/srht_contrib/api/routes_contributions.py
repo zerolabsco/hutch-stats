@@ -41,12 +41,16 @@ def get_contributions(
     year: int | None = Query(default=None, ge=1970, le=3000),
     from_date: str | None = Query(default=None, alias="from"),
     to_date: str | None = Query(default=None, alias="to"),
+    poller: PollerService = Depends(get_poller),
     db: Session = Depends(get_db),
     actor_identity_resolver: ActorIdentityResolver = Depends(get_actor_identity_resolver),
 ) -> ContributionCalendarResponse:
     start, end = _resolve_range(year, from_date, to_date)
     canonical_actor = actor_identity_resolver.canonicalize(actor, db=db)
-    return ContributionAggregator().build_calendar(db, canonical_actor, start, end)
+    poller.track_actor_request(db, canonical_actor)
+    response = ContributionAggregator().build_calendar(db, canonical_actor, start, end)
+    db.commit()
+    return response
 
 
 @router.get("/{actor}/stats", response_model=ContributionStatsResponse)
@@ -55,12 +59,16 @@ def get_contribution_stats(
     year: int | None = Query(default=None, ge=1970, le=3000),
     from_date: str | None = Query(default=None, alias="from"),
     to_date: str | None = Query(default=None, alias="to"),
+    poller: PollerService = Depends(get_poller),
     db: Session = Depends(get_db),
     actor_identity_resolver: ActorIdentityResolver = Depends(get_actor_identity_resolver),
 ) -> ContributionStatsResponse:
     start, end = _resolve_range(year, from_date, to_date)
     canonical_actor = actor_identity_resolver.canonicalize(actor, db=db)
-    return ContributionAggregator().build_stats(db, canonical_actor, start, end)
+    poller.track_actor_request(db, canonical_actor)
+    response = ContributionAggregator().build_stats(db, canonical_actor, start, end)
+    db.commit()
+    return response
 
 
 @router.post("/poll", response_model=PollResponse, dependencies=[Depends(require_api_key)])

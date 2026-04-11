@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -23,7 +24,13 @@ class ContributionDay(BaseModel):
     score: float
 
 
-class ContributionCalendarResponse(BaseModel):
+class ContributionIndexMetadata(BaseModel):
+    is_indexed: bool
+    last_polled_at: datetime | None = None
+    indexing_state: Literal["pending", "indexed", "error"]
+
+
+class ContributionCalendarResponse(ContributionIndexMetadata):
     actor: str
     from_date: date = Field(alias="from")
     to_date: date = Field(alias="to")
@@ -32,7 +39,7 @@ class ContributionCalendarResponse(BaseModel):
     model_config = {"populate_by_name": True}
 
 
-class ContributionStatsResponse(BaseModel):
+class ContributionStatsResponse(ContributionIndexMetadata):
     actor: str
     from_date: date = Field(alias="from")
     to_date: date = Field(alias="to")

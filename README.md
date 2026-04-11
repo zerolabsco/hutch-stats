@@ -165,7 +165,7 @@ Example response:
 }
 ```
 
-Scheduled polling only runs when `ENABLE_SCHEDULER=true` and uses `DEFAULT_ACTOR`.
+Scheduled polling only runs when `ENABLE_SCHEDULER=true`. The scheduler seeds `DEFAULT_ACTOR` as an initial known actor, and public contribution reads register additional actors for later background polling.
 
 For `git.sr.ht`, tracked repositories are configured via `GIT_TRACKED_REPOSITORIES`. Entries may be either:
 
@@ -205,6 +205,9 @@ Example response:
   "actor": "~your-user",
   "from": "2026-01-01",
   "to": "2026-03-30",
+  "is_indexed": true,
+  "last_polled_at": "2026-04-11T18:05:00Z",
+  "indexing_state": "indexed",
   "days": [
     {"date": "2026-03-28", "count": 3, "score": 3.5},
     {"date": "2026-03-29", "count": 0, "score": 0.0},
@@ -313,6 +316,7 @@ The SourceHut-specific assumptions are isolated to the service modules:
 
 - `git.sr.ht` polling is limited to repositories listed in `GIT_TRACKED_REPOSITORIES`
 - scheduled polling runs in-process, so it is not a distributed scheduler
+- newly requested actors are indexed asynchronously, so the first public read may be empty until a scheduler or manual poll runs
 - alias management is config-driven; there is no alias CRUD API yet
 - current deployment model is trusted-operator V1, not a public multi-tenant service
 
