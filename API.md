@@ -51,6 +51,7 @@ Repository names:
   - shorthand `repo-name`
   - canonical `~owner/repo-name`
 - Stored repository names are normalized to canonical `~owner/repo-name` form.
+- Tracked repositories are optional force-includes for git polling; owned repositories are auto-discovered per actor.
 
 ## Health
 

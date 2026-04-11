@@ -310,6 +310,67 @@ def test_git_ingestion_normalizes_commit_aliases_and_repository_names(db_session
     assert tracked_repositories == ["~ccleberg/Hutch"]
 
 
+def test_git_ingestion_auto_discovers_owned_repositories(db_session) -> None:
+    settings = make_settings(
+        ACTOR_ALIASES_JSON={"~ccleberg": ["cmc@example.com", "Chris Cleberg"]},
+        GIT_TRACKED_REPOSITORIES=[],
+    )
+    client = StubClient(
+        payloads_by_query={
+            "query UserRepositories": {
+                "user": {
+                    "repositories": {
+                        "results": [
+                            {"name": "Hutch", "owner": {"canonicalName": "~ccleberg"}},
+                        ],
+                        "cursor": None,
+                    }
+                }
+            },
+            "query RepositoryLog": {
+                "user": {
+                    "repository": {
+                        "name": "Hutch",
+                        "owner": {"canonicalName": "~ccleberg"},
+                        "log": {
+                            "results": [
+                                {
+                                    "id": "abc123",
+                                    "shortId": "abc123",
+                                    "author": {
+                                        "name": "Chris Cleberg",
+                                        "email": "cmc@example.com",
+                                        "time": "2026-03-30T12:00:00Z",
+                                    },
+                                    "committer": {
+                                        "name": "Chris Cleberg",
+                                        "email": "cmc@example.com",
+                                        "time": "2026-03-30T12:00:00Z",
+                                    },
+                                    "message": "Auto-discovered repo commit",
+                                }
+                            ],
+                            "cursor": None,
+                        },
+                    }
+                }
+            },
+        }
+    )
+
+    todo_service = TodoIngestionService(
+        StubClient(payload={"me": {"canonicalName": "~ccleberg"}, "events": {"results": [], "cursor": None}}),
+        settings,
+    )
+    git_service = GitIngestionService(client, settings)
+    poller = PollerService(todo_service=todo_service, git_service=git_service)
+
+    inserted = poller.poll_all(db_session, "~ccleberg")
+
+    assert inserted == 1
+    assert any("query UserRepositories" in call[0] for call in client.calls)
+
+
 def test_sync_overlap_reuses_cursor_window_and_suppresses_duplicates(db_session) -> None:
     event = NormalizedEvent(
         service="todo",

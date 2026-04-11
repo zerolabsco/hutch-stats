@@ -47,6 +47,23 @@ query RepositoryLog($username: String!, $repoName: String!, $cursor: Cursor) {
 """.strip()
 
 
+USER_REPOSITORIES_QUERY = """
+query UserRepositories($username: String!, $cursor: Cursor) {
+  user(username: $username) {
+    repositories(cursor: $cursor) {
+      results {
+        name
+        owner {
+          canonicalName
+        }
+      }
+      cursor
+    }
+  }
+}
+""".strip()
+
+
 @dataclass(slots=True)
 class GitPollResult:
     events: list[NormalizedEvent]
@@ -54,7 +71,7 @@ class GitPollResult:
 
 
 class GitIngestionService:
-    """Polls tracked git.sr.ht repositories and normalizes commits for one actor."""
+    """Polls git.sr.ht repositories and normalizes commits for one actor."""
 
     service_name = "git"
 
@@ -70,13 +87,13 @@ class GitIngestionService:
         repositories: list[str] | None = None,
     ) -> GitPollResult:
         since_dt = ensure_utc(since or (datetime.now(tz=UTC) - timedelta(days=30)))
-        tracked_repositories = repositories or self._tracked_repositories(actor)
-        if not tracked_repositories:
-            logger.info("git poll skipped for actor=%s because no tracked repositories are configured", actor)
+        discovered_repositories = repositories or self._repositories_for_actor(actor)
+        if not discovered_repositories:
+            logger.info("git poll skipped for actor=%s because no repositories were discovered", actor)
             return GitPollResult(events=[], cursor=datetime.now(tz=UTC).isoformat())
 
         events: list[NormalizedEvent] = []
-        for repository in tracked_repositories:
+        for repository in discovered_repositories:
             owner, repo_name = self._split_repository(actor, repository)
             repo_events = self._fetch_repository_commits(actor=actor, owner=owner, repo_name=repo_name, since=since_dt)
             events.extend(repo_events)
@@ -84,9 +101,61 @@ class GitIngestionService:
         logger.info("git poll complete for actor=%s normalized_events=%s", actor, len(events))
         return GitPollResult(events=events, cursor=datetime.now(tz=UTC).isoformat())
 
-    def _tracked_repositories(self, actor: str) -> list[str]:
-        repositories = self.settings.git_tracked_repositories
+    def _repositories_for_actor(self, actor: str) -> list[str]:
+        configured = {
+            self._canonical_repository_name(actor, repository)
+            for repository in self.settings.git_tracked_repositories
+        }
+        discovered = set(self._discover_owned_repositories(actor))
+        repositories = sorted(configured | discovered)
+        logger.info(
+            "git repositories selected for actor=%s count=%s configured=%s discovered=%s",
+            actor,
+            len(repositories),
+            len(configured),
+            len(discovered),
+        )
         return repositories
+
+    def _discover_owned_repositories(self, actor: str) -> list[str]:
+        owner = actor.lstrip("~")
+        repositories: list[str] = []
+        cursor: str | None = None
+
+        for _ in range(50):
+            data = self.client.execute(
+                USER_REPOSITORIES_QUERY,
+                {"username": owner, "cursor": cursor},
+            )
+            user = data.get("user") or {}
+            repositories_page = user.get("repositories") or {}
+            results = repositories_page.get("results") or []
+            cursor = repositories_page.get("cursor")
+            logger.info(
+                "git repository discovery actor=%s page_count=%s next_cursor=%s",
+                actor,
+                len(results),
+                bool(cursor),
+            )
+
+            for repository in results:
+                if not isinstance(repository, dict):
+                    continue
+                name = repository.get("name")
+                repository_owner = ((repository.get("owner") or {}).get("canonicalName") or actor).strip()
+                if not name or not repository_owner:
+                    continue
+                repositories.append(f"{repository_owner}/{name}")
+
+            if not cursor:
+                break
+
+        return repositories
+
+    @staticmethod
+    def _canonical_repository_name(default_actor: str, repository: str) -> str:
+        owner, repo_name = GitIngestionService._split_repository(default_actor, repository)
+        return f"~{owner}/{repo_name}"
 
     @staticmethod
     def _split_repository(default_actor: str, repository: str) -> tuple[str, str]:

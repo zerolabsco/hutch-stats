@@ -8,7 +8,7 @@ The current V1 is intentionally narrow and production-oriented:
 - SQLite-backed persistence
 - polling-based ingestion
 - complete `todo.sr.ht` ingestion path
-- practical `git.sr.ht` commit ingestion for tracked repositories
+- practical `git.sr.ht` commit ingestion with automatic repository discovery
 - public read-only contribution endpoints plus API-key protection for mutating/admin routes
 - Alembic-managed schema migrations
 
@@ -51,7 +51,7 @@ Current normalized event types:
 - `ticket_closed`
 - `commit`
 
-`todo.sr.ht` uses a feed-first strategy and falls back to crawling the authenticated user’s trackers, tickets, and ticket events when the top-level activity feed is empty. `git.sr.ht` polls tracked repositories for recent commits on the default branch.
+`todo.sr.ht` uses a feed-first strategy and falls back to crawling the authenticated user’s trackers, tickets, and ticket events when the top-level activity feed is empty. `git.sr.ht` polls the actor's owned repositories for recent commits on the default branch and unions in any explicitly configured repositories.
 
 ## Canonical Event Model
 
@@ -69,7 +69,7 @@ All ingestion services normalize external activity into this shape:
 
 The database enforces uniqueness on `(service, external_uid)` so polling is safe to repeat.
 
-Tracked git repositories are persisted in the `tracked_repositories` table and stored in canonical `~owner/repo` form. The poller seeds that table from `GIT_TRACKED_REPOSITORIES`, and repositories can also be created, updated, and deleted through the API.
+Tracked git repositories are persisted in the `tracked_repositories` table and stored in canonical `~owner/repo` form. They are optional overrides now: the poller auto-discovers an actor's owned repositories and unions in any configured or API-managed repositories.
 
 ## Configuration
 
@@ -84,7 +84,7 @@ Environment variables:
 - `DEFAULT_ACTOR`: actor used by the scheduled poll job
 - `POLL_INTERVAL_SECONDS`: scheduler interval in seconds
 - `ACTOR_ALIASES_JSON`: optional JSON object for actor/email/display-name alias mapping
-- `GIT_TRACKED_REPOSITORIES`: optional JSON array of repository names or `owner/repo` strings for git polling
+- `GIT_TRACKED_REPOSITORIES`: optional JSON array of repository names or `owner/repo` strings to union into git polling
 
 Example `.env`:
 
@@ -132,7 +132,7 @@ Set at least:
 - `API_KEY`
 - `SRHT_TOKEN`
 - `DEFAULT_ACTOR`
-- `GIT_TRACKED_REPOSITORIES` if you want git commit ingestion
+- `GIT_TRACKED_REPOSITORIES` if you want to force-include extra repositories beyond the actor's owned repos
 
 ### 3. Run database migrations
 
@@ -167,7 +167,7 @@ Example response:
 
 Scheduled polling only runs when `ENABLE_SCHEDULER=true`. The scheduler seeds `DEFAULT_ACTOR` as an initial known actor, and public contribution reads register additional actors for later background polling.
 
-For `git.sr.ht`, tracked repositories are configured via `GIT_TRACKED_REPOSITORIES`. Entries may be either:
+For `git.sr.ht`, owned repositories are auto-discovered for the actor. `GIT_TRACKED_REPOSITORIES` can still be used to union in extra repositories. Entries may be either:
 
 - `"Hutch"` for a repository owned by `DEFAULT_ACTOR`
 - `"~your-user/your-site"` for an explicit owner/repository pair
@@ -310,11 +310,11 @@ Covered areas:
 The SourceHut-specific assumptions are isolated to the service modules:
 
 - `src/srht_contrib/services/todo.py` uses the authenticated `events(cursor)` feed first, then falls back to tracker/ticket event traversal for reliable contribution discovery.
-- `src/srht_contrib/services/git.py` uses the documented repository `log(cursor)` query against tracked repositories and attributes commits through the configured alias map.
+- `src/srht_contrib/services/git.py` discovers owned repositories for an actor, polls each repository `log(cursor)`, and attributes commits through the configured alias map.
 
 ## Known Limitations
 
-- `git.sr.ht` polling is limited to repositories listed in `GIT_TRACKED_REPOSITORIES`
+- `git.sr.ht` polling assumes the actor's repositories are discoverable through the SourceHut GraphQL API
 - scheduled polling runs in-process, so it is not a distributed scheduler
 - newly requested actors are indexed asynchronously, so the first public read may be empty until a scheduler or manual poll runs
 - alias management is config-driven; there is no alias CRUD API yet
