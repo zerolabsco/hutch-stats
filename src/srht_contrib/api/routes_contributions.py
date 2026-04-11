@@ -13,7 +13,7 @@ from srht_contrib.services.srht_client import SourceHutClientError
 from srht_contrib.utils.dates import parse_date, year_bounds
 from srht_contrib.utils.identity import ActorIdentityResolver
 
-router = APIRouter(prefix="/api/contributions", tags=["contributions"], dependencies=[Depends(require_api_key)])
+router = APIRouter(prefix="/api/contributions", tags=["contributions"])
 
 
 def _resolve_range(year: int | None, from_date: str | None, to_date: str | None) -> tuple[date, date]:
@@ -63,7 +63,7 @@ def get_contribution_stats(
     return ContributionAggregator().build_stats(db, canonical_actor, start, end)
 
 
-@router.post("/poll", response_model=PollResponse)
+@router.post("/poll", response_model=PollResponse, dependencies=[Depends(require_api_key)])
 def trigger_manual_poll(
     actor: str,
     poller: PollerService = Depends(get_poller),

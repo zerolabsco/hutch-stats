@@ -9,7 +9,7 @@ The current V1 is intentionally narrow and production-oriented:
 - polling-based ingestion
 - complete `todo.sr.ht` ingestion path
 - practical `git.sr.ht` commit ingestion for tracked repositories
-- API-key protection for `/api/*`
+- public read-only contribution endpoints plus API-key protection for mutating/admin routes
 - Alembic-managed schema migrations
 
 ## What It Does
@@ -75,7 +75,7 @@ Tracked git repositories are persisted in the `tracked_repositories` table and s
 
 Environment variables:
 
-- `API_KEY`: required header token for all `/api/*` routes via `X-API-Key`
+- `API_KEY`: required header token for mutating/admin routes via `X-API-Key`
 - `ENABLE_SCHEDULER`: defaults to `false`; enables in-process polling when set to `true`
 - `SRHT_TOKEN`: bearer token for SourceHut GraphQL
 - `TODO_SRHT_ENDPOINT`: defaults to `https://todo.sr.ht/query`
@@ -189,15 +189,13 @@ Response:
 ### Contribution Calendar by Year
 
 ```bash
-curl "http://127.0.0.1:8000/api/contributions/~ccleberg?year=2026" \
-  -H "X-API-Key: replace-me"
+curl "http://127.0.0.1:8000/api/contributions/~ccleberg?year=2026"
 ```
 
 ### Contribution Calendar by Date Range
 
 ```bash
-curl "http://127.0.0.1:8000/api/contributions/~ccleberg?from=2026-01-01&to=2026-03-30" \
-  -H "X-API-Key: replace-me"
+curl "http://127.0.0.1:8000/api/contributions/~ccleberg?from=2026-01-01&to=2026-03-30"
 ```
 
 Example response:
@@ -218,8 +216,7 @@ Example response:
 ### Contribution Stats
 
 ```bash
-curl "http://127.0.0.1:8000/api/contributions/~ccleberg/stats?year=2026" \
-  -H "X-API-Key: replace-me"
+curl "http://127.0.0.1:8000/api/contributions/~ccleberg/stats?year=2026"
 ```
 
 Example response:
@@ -292,7 +289,8 @@ pytest
 Covered areas:
 
 - health endpoint
-- API key enforcement
+- public read-only contribution endpoints
+- API key enforcement for mutating/admin routes
 - calendar aggregation
 - zero-filled ranges
 - stats calculations

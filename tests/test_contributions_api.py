@@ -6,14 +6,18 @@ from srht_contrib.main import create_app
 from srht_contrib.models import ContributionEvent
 
 
-def test_api_routes_require_api_key(settings, db_engine, session_factory) -> None:
+def test_read_only_contribution_routes_are_public_and_write_routes_require_api_key(settings, db_engine, session_factory) -> None:
     app = create_app(settings, engine=db_engine, session_factory=session_factory)
     with TestClient(app) as open_client:
         response = open_client.get("/health")
+        public_contributions = open_client.get("/api/contributions/~ccleberg?from=2026-03-28&to=2026-03-30")
+        public_stats = open_client.get("/api/contributions/~ccleberg/stats?from=2026-03-28&to=2026-03-30")
     assert response.status_code == 200
+    assert public_contributions.status_code == 200
+    assert public_stats.status_code == 200
 
     with TestClient(app) as unauthorized:
-        unauthorized_response = unauthorized.get("/api/contributions/~ccleberg?from=2026-03-28&to=2026-03-30")
+        unauthorized_response = unauthorized.post("/api/contributions/poll?actor=~ccleberg")
     assert unauthorized_response.status_code == 401
 
     with TestClient(app) as invalid:
