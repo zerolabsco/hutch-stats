@@ -8,6 +8,7 @@ from typing import Any
 from srht_contrib.config import Settings
 from srht_contrib.schemas import NormalizedEvent
 from srht_contrib.services.srht_client import SourceHutGraphQLClient
+from srht_contrib.services.types import BackfillBatchResult
 from srht_contrib.utils.dates import ensure_utc, parse_datetime
 
 
@@ -292,6 +293,141 @@ class TodoIngestionService:
         )
         tracker_events = self._fetch_from_trackers(actor=actor, since=since_dt)
         return TodoPollResult(events=tracker_events, cursor=cursor_time)
+
+    def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
+        state = {
+            "trackers_cursor": None,
+            "tracker_queue": [],
+            "current_tracker": None,
+            "current_ticket": None,
+            "trackers_loaded": False,
+        }
+        if cursor_state:
+            state.update(cursor_state)
+
+        if not state["trackers_loaded"]:
+            data = self.client.execute(TODO_TRACKERS_QUERY, {"cursor": state["trackers_cursor"]})
+            me = data.get("me") or {}
+            trackers_page = me.get("trackers") or {}
+            results = trackers_page.get("results") or []
+            state["trackers_cursor"] = trackers_page.get("cursor")
+            for tracker in results:
+                if not isinstance(tracker, dict):
+                    continue
+                state["tracker_queue"].append(
+                    {
+                        "id": str(tracker.get("id")),
+                        "rid": str(tracker.get("rid")),
+                        "name": tracker.get("name"),
+                        "tickets_cursor": None,
+                        "pending_tickets": [],
+                    }
+                )
+            state["trackers_loaded"] = not bool(state["trackers_cursor"])
+            logger.info(
+                "todo backfill tracker discovery actor=%s trackers=%s next_cursor=%s queue=%s",
+                actor,
+                len(results),
+                bool(state["trackers_cursor"]),
+                len(state["tracker_queue"]),
+            )
+            complete = state["trackers_loaded"] and not state["tracker_queue"]
+            return BackfillBatchResult(events=[], cursor_state=None if complete else state, complete=complete)
+
+        if state["current_tracker"] is None:
+            if not state["tracker_queue"]:
+                return BackfillBatchResult(events=[], cursor_state=None, complete=True)
+            state["current_tracker"] = state["tracker_queue"].pop(0)
+
+        current_tracker = state["current_tracker"]
+        if state["current_ticket"] is None and not current_tracker["pending_tickets"]:
+            data = self.client.execute(
+                TODO_TRACKER_TICKETS_QUERY,
+                {"trackerRid": current_tracker["rid"], "cursor": current_tracker["tickets_cursor"]},
+            )
+            tracker = data.get("tracker") or {}
+            tickets_page = tracker.get("tickets") or {}
+            tickets = tickets_page.get("results") or []
+            current_tracker["tickets_cursor"] = tickets_page.get("cursor")
+            current_tracker["pending_tickets"].extend(
+                [{"id": int(ticket["id"]), "ref": str(ticket.get("ref") or ticket["id"])} for ticket in tickets if isinstance(ticket, dict)]
+            )
+            logger.info(
+                "todo backfill tracker=%s ticket page count=%s next_cursor=%s pending_tickets=%s",
+                current_tracker.get("name") or current_tracker.get("id"),
+                len(tickets),
+                bool(current_tracker["tickets_cursor"]),
+                len(current_tracker["pending_tickets"]),
+            )
+            if not current_tracker["pending_tickets"] and not current_tracker["tickets_cursor"]:
+                state["current_tracker"] = None
+            return BackfillBatchResult(events=[], cursor_state=state, complete=False)
+
+        if state["current_ticket"] is None:
+            if current_tracker["pending_tickets"]:
+                next_ticket = current_tracker["pending_tickets"].pop(0)
+                state["current_ticket"] = {**next_ticket, "cursor": None}
+            else:
+                state["current_tracker"] = None
+                return BackfillBatchResult(events=[], cursor_state=state, complete=False)
+
+        current_ticket = state["current_ticket"]
+        data = self.client.execute(
+            TODO_TICKET_EVENTS_QUERY,
+            {"trackerRid": current_tracker["rid"], "ticketId": current_ticket["id"], "cursor": current_ticket["cursor"]},
+        )
+        tracker = data.get("tracker") or {}
+        ticket_payload = (tracker.get("ticket") or {}) if isinstance(tracker, dict) else {}
+        event_page = ticket_payload.get("events") or {}
+        page_events = event_page.get("results") or []
+        next_cursor = event_page.get("cursor")
+        logger.info(
+            "todo backfill ticket events ref=%s tracker=%s count=%s next_cursor=%s",
+            current_ticket["ref"],
+            current_tracker.get("name") or current_tracker.get("id"),
+            len(page_events),
+            bool(next_cursor),
+        )
+
+        events: list[NormalizedEvent] = []
+        for event in page_events:
+            if not isinstance(event, dict):
+                continue
+            event["ticket"] = {
+                "id": ticket_payload.get("id", current_ticket["id"]),
+                "ref": ticket_payload.get("ref", current_ticket["ref"]),
+                "status": ticket_payload.get("status"),
+                "resolution": ticket_payload.get("resolution"),
+                "tracker": {"name": current_tracker.get("name")},
+            }
+            occurred_at = parse_datetime(event["created"])
+            for change in event.get("changes") or []:
+                if not isinstance(change, dict):
+                    continue
+                normalized = _normalize_event_change(
+                    settings=self.settings,
+                    actor=actor,
+                    event=event,
+                    change=change,
+                    occurred_at=occurred_at,
+                )
+                if normalized is not None:
+                    events.append(normalized)
+
+        if next_cursor:
+            state["current_ticket"]["cursor"] = next_cursor
+        else:
+            state["current_ticket"] = None
+            if not current_tracker["pending_tickets"] and not current_tracker["tickets_cursor"]:
+                state["current_tracker"] = None
+
+        complete = (
+            state["trackers_loaded"]
+            and not state["tracker_queue"]
+            and state["current_tracker"] is None
+            and state["current_ticket"] is None
+        )
+        return BackfillBatchResult(events=events, cursor_state=None if complete else state, complete=complete)
 
     def _fetch_from_activity_feed(self, actor: str, since: datetime) -> TodoPollResult:
         events: list[NormalizedEvent] = []

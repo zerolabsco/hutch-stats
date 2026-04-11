@@ -8,6 +8,7 @@ from typing import Any
 from srht_contrib.config import Settings
 from srht_contrib.schemas import NormalizedEvent
 from srht_contrib.services.srht_client import SourceHutGraphQLClient
+from srht_contrib.services.types import BackfillBatchResult
 from srht_contrib.utils.dates import ensure_utc, parse_datetime
 from srht_contrib.utils.identity import ActorIdentityResolver
 
@@ -116,6 +117,95 @@ class GitIngestionService:
             len(discovered),
         )
         return repositories
+
+    def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
+        state = {
+            "discovery_cursor": None,
+            "discovery_complete": False,
+            "repository_queue": sorted(
+                {
+                    self._canonical_repository_name(actor, repository)
+                    for repository in self.settings.git_tracked_repositories
+                }
+            ),
+            "current_repository": None,
+        }
+        if cursor_state:
+            state.update(cursor_state)
+
+        if not state["discovery_complete"]:
+            data = self.client.execute(
+                USER_REPOSITORIES_QUERY,
+                {"username": actor.lstrip("~"), "cursor": state["discovery_cursor"]},
+            )
+            user = data.get("user") or {}
+            repositories_page = user.get("repositories") or {}
+            results = repositories_page.get("results") or []
+            state["discovery_cursor"] = repositories_page.get("cursor")
+            state["discovery_complete"] = not bool(state["discovery_cursor"])
+            known = set(state["repository_queue"])
+            current_repository = state.get("current_repository")
+            if current_repository:
+                known.add(current_repository["name"])
+            for repository in results:
+                if not isinstance(repository, dict):
+                    continue
+                name = repository.get("name")
+                repository_owner = ((repository.get("owner") or {}).get("canonicalName") or actor).strip()
+                if not name or not repository_owner:
+                    continue
+                canonical_name = f"{repository_owner}/{name}"
+                if canonical_name not in known:
+                    state["repository_queue"].append(canonical_name)
+                    known.add(canonical_name)
+            state["repository_queue"] = sorted(state["repository_queue"])
+            logger.info(
+                "git backfill discovery actor=%s page_count=%s queue=%s next_cursor=%s",
+                actor,
+                len(results),
+                len(state["repository_queue"]),
+                bool(state["discovery_cursor"]),
+            )
+            complete = state["discovery_complete"] and not state["repository_queue"] and not state["current_repository"]
+            return BackfillBatchResult(events=[], cursor_state=state, complete=complete)
+
+        if state["current_repository"] is None:
+            if not state["repository_queue"]:
+                return BackfillBatchResult(events=[], cursor_state=None, complete=True)
+            state["current_repository"] = {"name": state["repository_queue"].pop(0), "cursor": None}
+
+        repository_name = state["current_repository"]["name"]
+        owner, repo_name = self._split_repository(actor, repository_name)
+        data = self.client.execute(
+            REPOSITORY_LOG_QUERY,
+            {"username": owner, "repoName": repo_name, "cursor": state["current_repository"]["cursor"]},
+        )
+        user = data.get("user") or {}
+        repository = user.get("repository") or {}
+        log_page = repository.get("log") or {}
+        commits = log_page.get("results") or []
+        next_cursor = log_page.get("cursor")
+        events = [
+            normalized
+            for commit in commits
+            if isinstance(commit, dict)
+            for normalized in [self._normalize_commit(actor=actor, repo_name=repo_name, commit=commit)]
+            if normalized is not None
+        ]
+        logger.info(
+            "git backfill actor=%s repository=%s commits=%s next_cursor=%s",
+            actor,
+            repository_name,
+            len(commits),
+            bool(next_cursor),
+        )
+        if next_cursor:
+            state["current_repository"]["cursor"] = next_cursor
+        else:
+            state["current_repository"] = None
+
+        complete = state["discovery_complete"] and not state["repository_queue"] and not state["current_repository"]
+        return BackfillBatchResult(events=events, cursor_state=None if complete else state, complete=complete)
 
     def _discover_owned_repositories(self, actor: str) -> list[str]:
         owner = actor.lstrip("~")

@@ -44,6 +44,7 @@ Contribution ranges:
 
 - Contribution read endpoints return zero-filled days, so clients do not need to patch missing dates.
 - Public contribution reads also register the actor for background indexing. A first lookup may therefore return an empty graph while the scheduler catches up.
+- Incremental indexing and historical backfill are separate. An actor can be recently indexed without being fully backfilled yet.
 
 Background polling:
 
@@ -110,6 +111,7 @@ Behavior notes:
 - This endpoint resolves aliases to a canonical actor before querying data.
 - This endpoint also registers the actor for background indexing and updates the actor's `last_requested_at` timestamp.
 - The response is always immediate; it does not wait for SourceHut polling to finish.
+- Historical backfill runs in bounded background batches and may take multiple scheduler passes to complete.
 
 Example by year:
 
@@ -133,6 +135,9 @@ Response `200 OK`:
   "is_indexed": false,
   "last_polled_at": null,
   "indexing_state": "pending",
+  "is_backfilled": false,
+  "backfill_state": "in_progress",
+  "backfill_completed_at": null,
   "days": [
     { "date": "2026-03-01", "count": 0, "score": 0.0 },
     { "date": "2026-03-02", "count": 3, "score": 2.5 }
@@ -145,9 +150,12 @@ Response fields:
 - `actor` string: canonical actor after alias resolution
 - `from` string: inclusive start date
 - `to` string: inclusive end date
-- `is_indexed` boolean: whether the service has already indexed activity for this actor
+- `is_indexed` boolean: whether the service has already completed at least one successful recent/incremental poll for this actor
 - `last_polled_at` string or `null`: most recent successful poll time, if any
 - `indexing_state` string: one of `pending`, `indexed`, or `error`
+- `is_backfilled` boolean: whether historical backfill has completed for this actor
+- `backfill_state` string: one of `pending`, `in_progress`, `completed`, or `error`
+- `backfill_completed_at` string or `null`: when full historical backfill completed, if it has
 - `days` array:
   - `date` string `YYYY-MM-DD`
   - `count` integer contribution count for the day
@@ -158,6 +166,13 @@ Indexing state semantics:
 - `pending`: the actor is known but has not completed a successful poll yet
 - `indexed`: at least one successful poll has completed for the actor
 - `error`: the most recent poll attempt for the actor failed
+
+Backfill state semantics:
+
+- `pending`: the actor has not started historical backfill yet
+- `in_progress`: historical backfill is actively progressing in bounded background batches
+- `completed`: historical backfill has completed for all supported services
+- `error`: the most recent backfill attempt failed
 
 Possible errors:
 
@@ -193,6 +208,7 @@ Behavior notes:
 
 - This endpoint has the same actor-registration and alias-resolution behavior as the calendar endpoint.
 - This endpoint returns immediately and does not block on SourceHut polling.
+- This endpoint also reflects historical backfill state so clients can distinguish recent indexing from complete history.
 
 Example:
 
@@ -210,6 +226,9 @@ Response `200 OK`:
   "is_indexed": true,
   "last_polled_at": "2026-04-11T18:05:00Z",
   "indexing_state": "indexed",
+  "is_backfilled": false,
+  "backfill_state": "in_progress",
+  "backfill_completed_at": null,
   "total_events": 126,
   "total_score": 116.75,
   "active_days": 14,
@@ -226,6 +245,9 @@ Response fields:
 - `is_indexed` boolean
 - `last_polled_at` string or `null`
 - `indexing_state` string
+- `is_backfilled` boolean
+- `backfill_state` string
+- `backfill_completed_at` string or `null`
 - `total_events` integer
 - `total_score` float
 - `active_days` integer
@@ -275,6 +297,7 @@ Response fields:
 Behavior notes:
 
 - Manual polling also updates the actor's indexing metadata.
+- Manual polling also advances historical backfill by one bounded batch per supported service.
 - Git polling auto-discovers the actor's owned repositories and unions in any configured tracked repositories.
 
 Possible errors:

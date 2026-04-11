@@ -28,6 +28,9 @@ class ContributionIndexMetadata(BaseModel):
     is_indexed: bool
     last_polled_at: datetime | None = None
     indexing_state: Literal["pending", "indexed", "error"]
+    is_backfilled: bool = False
+    backfill_state: Literal["pending", "in_progress", "completed", "error"] = "pending"
+    backfill_completed_at: datetime | None = None
 
 
 class ContributionCalendarResponse(ContributionIndexMetadata):

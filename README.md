@@ -14,7 +14,7 @@ The current V1 is intentionally narrow and production-oriented:
 
 ## What It Does
 
-The service collects SourceHut activity from one or more sr.ht GraphQL services, turns those records into a canonical event shape, aggregates activity by day, and returns zero-filled calendar ranges so the client never has to patch missing dates.
+The service collects SourceHut activity from one or more sr.ht GraphQL services, turns those records into a canonical event shape, aggregates activity by day, and returns zero-filled calendar ranges so the client never has to patch missing dates. It performs both recent incremental polling and bounded historical backfill.
 
 Example use cases:
 
@@ -28,7 +28,7 @@ The code is split into small, testable layers:
 
 - `src/srht_contrib/config.py`: environment-driven settings and event weights
 - `src/srht_contrib/db.py`: SQLAlchemy engine/session setup and app-scoped DB access
-- `src/srht_contrib/models.py`: ORM models for normalized events, sync state, aliases, and tracked repos
+- `src/srht_contrib/models.py`: ORM models for normalized events, sync state, aliases, tracked actors, and backfill state
 - `src/srht_contrib/services/srht_client.py`: generic SourceHut GraphQL client with error handling and simple retries
 - `src/srht_contrib/services/todo.py`: `todo.sr.ht` ingestion and normalization
 - `src/srht_contrib/services/git.py`: `git.sr.ht` tracked-repository commit ingestion
@@ -165,7 +165,7 @@ Example response:
 }
 ```
 
-Scheduled polling only runs when `ENABLE_SCHEDULER=true`. The scheduler seeds `DEFAULT_ACTOR` as an initial known actor, and public contribution reads register additional actors for later background polling.
+Scheduled polling only runs when `ENABLE_SCHEDULER=true`. The scheduler seeds `DEFAULT_ACTOR` as an initial known actor, runs one poll immediately at startup, and public contribution reads register additional actors for later background polling and historical backfill.
 
 For `git.sr.ht`, owned repositories are auto-discovered for the actor. `GIT_TRACKED_REPOSITORIES` can still be used to union in extra repositories. Entries may be either:
 
@@ -208,6 +208,9 @@ Example response:
   "is_indexed": true,
   "last_polled_at": "2026-04-11T18:05:00Z",
   "indexing_state": "indexed",
+  "is_backfilled": false,
+  "backfill_state": "in_progress",
+  "backfill_completed_at": null,
   "days": [
     {"date": "2026-03-28", "count": 3, "score": 3.5},
     {"date": "2026-03-29", "count": 0, "score": 0.0},
@@ -229,6 +232,12 @@ Example response:
   "actor": "~your-user",
   "from": "2026-01-01",
   "to": "2026-12-31",
+  "is_indexed": true,
+  "last_polled_at": "2026-04-11T18:05:00Z",
+  "indexing_state": "indexed",
+  "is_backfilled": false,
+  "backfill_state": "in_progress",
+  "backfill_completed_at": null,
   "total_events": 42,
   "total_score": 37.5,
   "active_days": 18,
@@ -317,6 +326,7 @@ The SourceHut-specific assumptions are isolated to the service modules:
 - `git.sr.ht` polling assumes the actor's repositories are discoverable through the SourceHut GraphQL API
 - scheduled polling runs in-process, so it is not a distributed scheduler
 - newly requested actors are indexed asynchronously, so the first public read may be empty until a scheduler or manual poll runs
+- full historical backfill can take many scheduler passes for active users because it runs in bounded batches
 - alias management is config-driven; there is no alias CRUD API yet
 - current deployment model is trusted-operator V1, not a public multi-tenant service
 

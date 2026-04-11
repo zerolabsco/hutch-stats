@@ -63,6 +63,9 @@ def test_public_read_registers_actor_for_lazy_indexing(client: TestClient, db_se
     assert response.status_code == 200
     assert response.json()["is_indexed"] is False
     assert response.json()["indexing_state"] == "pending"
+    assert response.json()["is_backfilled"] is False
+    assert response.json()["backfill_state"] == "pending"
+    assert response.json()["backfill_completed_at"] is None
     assert response.json()["last_polled_at"] is None
     assert tracked_actor is not None
     assert tracked_actor.is_active is True
@@ -107,6 +110,7 @@ def test_contribution_stats_api(client: TestClient, db_session) -> None:
     assert response.json()["current_streak"] == 2
     assert response.json()["is_indexed"] is True
     assert response.json()["indexing_state"] == "indexed"
+    assert response.json()["is_backfilled"] is False
 
 
 def test_invalid_date_input_returns_400(client: TestClient) -> None:

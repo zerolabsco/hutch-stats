@@ -81,6 +81,9 @@ class ContributionAggregator:
             is_indexed=is_indexed,
             last_polled_at=tracked_actor.last_polled_at if tracked_actor is not None else None,
             indexing_state=indexing_state,
+            is_backfilled=(tracked_actor.backfill_status == "completed") if tracked_actor is not None else False,
+            backfill_state=(tracked_actor.backfill_status if tracked_actor is not None else "pending"),
+            backfill_completed_at=tracked_actor.backfill_completed_at if tracked_actor is not None else None,
         )
 
     def _query_daily_aggregates(self, db: Session, actor: str, start: date, end: date) -> list[DailyAggregate]:

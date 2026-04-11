@@ -4,10 +4,11 @@ from sqlalchemy import select
 
 from srht_contrib.config import Settings
 from srht_contrib.jobs.poller import PollerService
-from srht_contrib.models import SyncState, TrackedActor, TrackedRepository
+from srht_contrib.models import ServiceBackfillState, SyncState, TrackedActor, TrackedRepository
 from srht_contrib.schemas import NormalizedEvent
 from srht_contrib.services.git import GitIngestionService, GitPollResult
 from srht_contrib.services.todo import TodoIngestionService, TodoPollResult
+from srht_contrib.services.types import BackfillBatchResult
 
 
 class StubClient:
@@ -37,6 +38,9 @@ class RecordingTodoService:
         events = self.events_by_call.pop(0)
         return TodoPollResult(events=events, cursor="2026-03-31T00:00:00+00:00")
 
+    def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
+        return BackfillBatchResult(events=[], cursor_state=None, complete=True)
+
 
 class EmptyGitService:
     service_name = "git"
@@ -53,6 +57,30 @@ class EmptyGitService:
 
     def fetch_recent_events(self, actor: str, since: datetime | None = None, repositories=None) -> GitPollResult:
         return GitPollResult(events=[], cursor="2026-03-31T00:00:00+00:00")
+
+    def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
+        return BackfillBatchResult(events=[], cursor_state=None, complete=True)
+
+
+class BackfillingTodoService:
+    service_name = "todo"
+
+    def fetch_recent_events(self, actor: str, since: datetime | None = None) -> TodoPollResult:
+        return TodoPollResult(events=[], cursor="2026-03-31T00:00:00+00:00")
+
+    def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
+        event = NormalizedEvent(
+            service="todo",
+            event_type="ticket_created",
+            actor=actor,
+            repo_name="todo",
+            resource_id="backfill-ticket",
+            external_uid=f"todo:backfill:{actor}",
+            occurred_at=datetime(2024, 1, 1, 12, 0, tzinfo=UTC),
+            weight=1.0,
+            raw_payload_json=None,
+        )
+        return BackfillBatchResult(events=[event], cursor_state=None, complete=True)
 
 
 def make_settings(**overrides) -> Settings:
@@ -424,3 +452,21 @@ def test_scheduled_poll_polls_known_actors_and_seeds_default_actor(db_session) -
     assert [actor.actor for actor in tracked_actors] == ["~default", "~known"]
     assert all(actor.last_poll_status == "indexed" for actor in tracked_actors)
     assert all(actor.last_polled_at is not None for actor in tracked_actors)
+
+
+def test_poll_marks_backfill_complete_and_persists_service_state(db_session) -> None:
+    poller = PollerService(todo_service=BackfillingTodoService(), git_service=EmptyGitService())
+
+    inserted = poller.poll_all(db_session, "~ccleberg")
+
+    tracked_actor = db_session.scalar(select(TrackedActor).where(TrackedActor.actor == "~ccleberg"))
+    service_states = db_session.scalars(
+        select(ServiceBackfillState).where(ServiceBackfillState.actor == "~ccleberg").order_by(ServiceBackfillState.service)
+    ).all()
+
+    assert inserted == 1
+    assert tracked_actor is not None
+    assert tracked_actor.backfill_status == "completed"
+    assert tracked_actor.backfill_completed_at is not None
+    assert [state.service for state in service_states] == ["git", "todo"]
+    assert all(state.status == "completed" for state in service_states)
