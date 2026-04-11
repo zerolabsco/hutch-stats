@@ -48,6 +48,8 @@ def test_contributions_api_returns_zero_filled_range(client: TestClient, db_sess
     assert response.status_code == 200
     assert response.json()["is_indexed"] is True
     assert response.json()["indexing_state"] == "indexed"
+    assert response.json()["is_recent_window_backfilled"] is False
+    assert response.json()["recent_backfill_state"] == "pending"
     assert response.json()["days"] == [
         {"date": "2026-03-28", "count": 0, "score": 0.0},
         {"date": "2026-03-29", "count": 0, "score": 0.0},
@@ -63,6 +65,9 @@ def test_public_read_registers_actor_for_lazy_indexing(client: TestClient, db_se
     assert response.status_code == 200
     assert response.json()["is_indexed"] is False
     assert response.json()["indexing_state"] == "pending"
+    assert response.json()["is_recent_window_backfilled"] is False
+    assert response.json()["recent_backfill_state"] == "pending"
+    assert response.json()["recent_backfill_completed_at"] is None
     assert response.json()["is_backfilled"] is False
     assert response.json()["backfill_state"] == "pending"
     assert response.json()["backfill_completed_at"] is None
@@ -110,6 +115,8 @@ def test_contribution_stats_api(client: TestClient, db_session) -> None:
     assert response.json()["current_streak"] == 2
     assert response.json()["is_indexed"] is True
     assert response.json()["indexing_state"] == "indexed"
+    assert response.json()["is_recent_window_backfilled"] is False
+    assert response.json()["recent_backfill_state"] == "pending"
     assert response.json()["is_backfilled"] is False
 
 

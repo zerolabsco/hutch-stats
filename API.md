@@ -45,6 +45,7 @@ Contribution ranges:
 - Contribution read endpoints return zero-filled days, so clients do not need to patch missing dates.
 - Public contribution reads also register the actor for background indexing. A first lookup may therefore return an empty graph while the scheduler catches up.
 - Incremental indexing and historical backfill are separate. An actor can be recently indexed without being fully backfilled yet.
+- The service prioritizes a recent visible history window first, then continues deep-history backfill afterward.
 
 Background polling:
 
@@ -112,6 +113,7 @@ Behavior notes:
 - This endpoint also registers the actor for background indexing and updates the actor's `last_requested_at` timestamp.
 - The response is always immediate; it does not wait for SourceHut polling to finish.
 - Historical backfill runs in bounded background batches and may take multiple scheduler passes to complete.
+- The recent visible window is prioritized before full-history backfill so clients can show a useful graph sooner.
 
 Example by year:
 
@@ -135,6 +137,9 @@ Response `200 OK`:
   "is_indexed": false,
   "last_polled_at": null,
   "indexing_state": "pending",
+  "is_recent_window_backfilled": false,
+  "recent_backfill_state": "in_progress",
+  "recent_backfill_completed_at": null,
   "is_backfilled": false,
   "backfill_state": "in_progress",
   "backfill_completed_at": null,
@@ -153,6 +158,9 @@ Response fields:
 - `is_indexed` boolean: whether the service has already completed at least one successful recent/incremental poll for this actor
 - `last_polled_at` string or `null`: most recent successful poll time, if any
 - `indexing_state` string: one of `pending`, `indexed`, or `error`
+- `is_recent_window_backfilled` boolean: whether the prioritized recent history window has completed backfill
+- `recent_backfill_state` string: one of `pending`, `in_progress`, `completed`, or `error`
+- `recent_backfill_completed_at` string or `null`: when recent-window backfill completed, if it has
 - `is_backfilled` boolean: whether historical backfill has completed for this actor
 - `backfill_state` string: one of `pending`, `in_progress`, `completed`, or `error`
 - `backfill_completed_at` string or `null`: when full historical backfill completed, if it has
@@ -169,6 +177,8 @@ Indexing state semantics:
 
 Backfill state semantics:
 
+- recent-window fields:
+  - represent the prioritized visible-history window for client UX
 - `pending`: the actor has not started historical backfill yet
 - `in_progress`: historical backfill is actively progressing in bounded background batches
 - `completed`: historical backfill has completed for all supported services
@@ -226,6 +236,9 @@ Response `200 OK`:
   "is_indexed": true,
   "last_polled_at": "2026-04-11T18:05:00Z",
   "indexing_state": "indexed",
+  "is_recent_window_backfilled": true,
+  "recent_backfill_state": "completed",
+  "recent_backfill_completed_at": "2026-04-11T18:02:00Z",
   "is_backfilled": false,
   "backfill_state": "in_progress",
   "backfill_completed_at": null,
@@ -245,6 +258,9 @@ Response fields:
 - `is_indexed` boolean
 - `last_polled_at` string or `null`
 - `indexing_state` string
+- `is_recent_window_backfilled` boolean
+- `recent_backfill_state` string
+- `recent_backfill_completed_at` string or `null`
 - `is_backfilled` boolean
 - `backfill_state` string
 - `backfill_completed_at` string or `null`

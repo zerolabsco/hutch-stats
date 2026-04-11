@@ -41,6 +41,15 @@ class RecordingTodoService:
     def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
         return BackfillBatchResult(events=[], cursor_state=None, complete=True)
 
+    def fetch_recent_backfill_batch(
+        self,
+        actor: str,
+        cursor_state: dict | None = None,
+        *,
+        since: datetime,
+    ) -> BackfillBatchResult:
+        return BackfillBatchResult(events=[], cursor_state=None, complete=True)
+
 
 class EmptyGitService:
     service_name = "git"
@@ -59,6 +68,15 @@ class EmptyGitService:
         return GitPollResult(events=[], cursor="2026-03-31T00:00:00+00:00")
 
     def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
+        return BackfillBatchResult(events=[], cursor_state=None, complete=True)
+
+    def fetch_recent_backfill_batch(
+        self,
+        actor: str,
+        cursor_state: dict | None = None,
+        *,
+        since: datetime,
+    ) -> BackfillBatchResult:
         return BackfillBatchResult(events=[], cursor_state=None, complete=True)
 
 
@@ -82,6 +100,15 @@ class BackfillingTodoService:
         )
         return BackfillBatchResult(events=[event], cursor_state=None, complete=True)
 
+    def fetch_recent_backfill_batch(
+        self,
+        actor: str,
+        cursor_state: dict | None = None,
+        *,
+        since: datetime,
+    ) -> BackfillBatchResult:
+        return self.fetch_backfill_batch(actor, cursor_state)
+
 
 class QueueShrinkingTodoService:
     service_name = "todo"
@@ -99,6 +126,15 @@ class QueueShrinkingTodoService:
             return BackfillBatchResult(events=[], cursor_state=None, complete=True)
         state["tracker_queue"].pop(0)
         return BackfillBatchResult(events=[], cursor_state=state, complete=False)
+
+    def fetch_recent_backfill_batch(
+        self,
+        actor: str,
+        cursor_state: dict | None = None,
+        *,
+        since: datetime,
+    ) -> BackfillBatchResult:
+        return self.fetch_backfill_batch(actor, cursor_state)
 
 
 class QueueShrinkingGitService:
@@ -127,6 +163,15 @@ class QueueShrinkingGitService:
             return BackfillBatchResult(events=[], cursor_state=None, complete=True)
         state["repository_queue"].pop(0)
         return BackfillBatchResult(events=[], cursor_state=state, complete=False)
+
+    def fetch_recent_backfill_batch(
+        self,
+        actor: str,
+        cursor_state: dict | None = None,
+        *,
+        since: datetime,
+    ) -> BackfillBatchResult:
+        return self.fetch_backfill_batch(actor, cursor_state)
 
 
 def make_settings(**overrides) -> Settings:
@@ -507,14 +552,18 @@ def test_poll_marks_backfill_complete_and_persists_service_state(db_session) -> 
 
     tracked_actor = db_session.scalar(select(TrackedActor).where(TrackedActor.actor == "~ccleberg"))
     service_states = db_session.scalars(
-        select(ServiceBackfillState).where(ServiceBackfillState.actor == "~ccleberg").order_by(ServiceBackfillState.service)
+        select(ServiceBackfillState)
+        .where(ServiceBackfillState.actor == "~ccleberg")
+        .order_by(ServiceBackfillState.scope, ServiceBackfillState.service)
     ).all()
 
     assert inserted == 1
     assert tracked_actor is not None
+    assert tracked_actor.recent_backfill_status == "completed"
+    assert tracked_actor.recent_backfill_completed_at is not None
     assert tracked_actor.backfill_status == "completed"
     assert tracked_actor.backfill_completed_at is not None
-    assert [state.service for state in service_states] == ["git", "todo"]
+    assert [f"{state.scope}:{state.service}" for state in service_states] == ["full:git", "full:todo", "recent:git", "recent:todo"]
     assert all(state.status == "completed" for state in service_states)
 
 
@@ -525,7 +574,9 @@ def test_backfill_cursor_state_shrinks_across_repeated_polls(db_session) -> None
     first_states = {
         state.service: state.cursor_json
         for state in db_session.scalars(
-            select(ServiceBackfillState).where(ServiceBackfillState.actor == "~ccleberg")
+            select(ServiceBackfillState)
+            .where(ServiceBackfillState.actor == "~ccleberg")
+            .where(ServiceBackfillState.scope == "full")
         ).all()
     }
 
@@ -533,7 +584,9 @@ def test_backfill_cursor_state_shrinks_across_repeated_polls(db_session) -> None
     second_states = {
         state.service: state.cursor_json
         for state in db_session.scalars(
-            select(ServiceBackfillState).where(ServiceBackfillState.actor == "~ccleberg")
+            select(ServiceBackfillState)
+            .where(ServiceBackfillState.actor == "~ccleberg")
+            .where(ServiceBackfillState.scope == "full")
         ).all()
     }
 

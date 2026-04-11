@@ -296,6 +296,24 @@ class TodoIngestionService:
         return TodoPollResult(events=tracker_events, cursor=cursor_time)
 
     def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
+        return self._fetch_backfill_batch(actor, cursor_state, since=None)
+
+    def fetch_recent_backfill_batch(
+        self,
+        actor: str,
+        cursor_state: dict | None = None,
+        *,
+        since: datetime,
+    ) -> BackfillBatchResult:
+        return self._fetch_backfill_batch(actor, cursor_state, since=since)
+
+    def _fetch_backfill_batch(
+        self,
+        actor: str,
+        cursor_state: dict | None,
+        *,
+        since: datetime | None,
+    ) -> BackfillBatchResult:
         state = {
             "trackers_cursor": None,
             "tracker_queue": [],
@@ -349,10 +367,20 @@ class TodoIngestionService:
             tracker = data.get("tracker") or {}
             tickets_page = tracker.get("tickets") or {}
             tickets = tickets_page.get("results") or []
-            current_tracker["tickets_cursor"] = tickets_page.get("cursor")
-            current_tracker["pending_tickets"].extend(
-                [{"id": int(ticket["id"]), "ref": str(ticket.get("ref") or ticket["id"])} for ticket in tickets if isinstance(ticket, dict)]
-            )
+            next_tickets_cursor = tickets_page.get("cursor")
+            stop_tracker_paging = False
+            for ticket in tickets:
+                if not isinstance(ticket, dict):
+                    continue
+                if since is not None:
+                    updated = parse_datetime(ticket["updated"])
+                    if updated < since:
+                        stop_tracker_paging = True
+                        continue
+                current_tracker["pending_tickets"].append(
+                    {"id": int(ticket["id"]), "ref": str(ticket.get("ref") or ticket["id"])}
+                )
+            current_tracker["tickets_cursor"] = None if stop_tracker_paging else next_tickets_cursor
             logger.info(
                 "todo backfill tracker=%s ticket page count=%s next_cursor=%s pending_tickets=%s",
                 current_tracker.get("name") or current_tracker.get("id"),
@@ -391,6 +419,7 @@ class TodoIngestionService:
         )
 
         events: list[NormalizedEvent] = []
+        stop_ticket_paging = False
         for event in page_events:
             if not isinstance(event, dict):
                 continue
@@ -402,6 +431,9 @@ class TodoIngestionService:
                 "tracker": {"name": current_tracker.get("name")},
             }
             occurred_at = parse_datetime(event["created"])
+            if since is not None and occurred_at < since:
+                stop_ticket_paging = True
+                continue
             for change in event.get("changes") or []:
                 if not isinstance(change, dict):
                     continue
@@ -415,7 +447,7 @@ class TodoIngestionService:
                 if normalized is not None:
                     events.append(normalized)
 
-        if next_cursor:
+        if next_cursor and not stop_ticket_paging:
             state["current_ticket"]["cursor"] = next_cursor
         else:
             state["current_ticket"] = None

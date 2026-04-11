@@ -71,6 +71,10 @@ class TrackedActor(Base):
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_poll_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_poll_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recent_backfill_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    recent_backfill_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    recent_backfill_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_recent_backfill_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     backfill_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     backfill_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     backfill_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -79,11 +83,12 @@ class TrackedActor(Base):
 
 class ServiceBackfillState(Base):
     __tablename__ = "service_backfill_states"
-    __table_args__ = (UniqueConstraint("actor", "service", name="uq_service_backfill_state_actor_service"),)
+    __table_args__ = (UniqueConstraint("actor", "service", "scope", name="uq_service_backfill_state_actor_service_scope"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     actor: Mapped[str] = mapped_column(String(255), nullable=False)
     service: Mapped[str] = mapped_column(String(32), nullable=False)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, default="full")
     cursor_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

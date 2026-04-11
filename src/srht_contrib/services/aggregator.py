@@ -62,6 +62,12 @@ class ContributionAggregator:
             is_indexed=calendar.is_indexed,
             last_polled_at=calendar.last_polled_at,
             indexing_state=calendar.indexing_state,
+            is_recent_window_backfilled=calendar.is_recent_window_backfilled,
+            recent_backfill_state=calendar.recent_backfill_state,
+            recent_backfill_completed_at=calendar.recent_backfill_completed_at,
+            is_backfilled=calendar.is_backfilled,
+            backfill_state=calendar.backfill_state,
+            backfill_completed_at=calendar.backfill_completed_at,
         )
 
     def _index_metadata(self, db: Session, actor: str) -> ContributionIndexMetadata:
@@ -81,6 +87,9 @@ class ContributionAggregator:
             is_indexed=is_indexed,
             last_polled_at=tracked_actor.last_polled_at if tracked_actor is not None else None,
             indexing_state=indexing_state,
+            is_recent_window_backfilled=(tracked_actor.recent_backfill_status == "completed") if tracked_actor is not None else False,
+            recent_backfill_state=(tracked_actor.recent_backfill_status if tracked_actor is not None else "pending"),
+            recent_backfill_completed_at=tracked_actor.recent_backfill_completed_at if tracked_actor is not None else None,
             is_backfilled=(tracked_actor.backfill_status == "completed") if tracked_actor is not None else False,
             backfill_state=(tracked_actor.backfill_status if tracked_actor is not None else "pending"),
             backfill_completed_at=tracked_actor.backfill_completed_at if tracked_actor is not None else None,

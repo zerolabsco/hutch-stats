@@ -14,7 +14,7 @@ The current V1 is intentionally narrow and production-oriented:
 
 ## What It Does
 
-The service collects SourceHut activity from one or more sr.ht GraphQL services, turns those records into a canonical event shape, aggregates activity by day, and returns zero-filled calendar ranges so the client never has to patch missing dates. It performs both recent incremental polling and bounded historical backfill.
+The service collects SourceHut activity from one or more sr.ht GraphQL services, turns those records into a canonical event shape, aggregates activity by day, and returns zero-filled calendar ranges so the client never has to patch missing dates. It performs recent incremental polling, prioritizes a recent visible-history window for faster UX, and then continues bounded historical backfill.
 
 Example use cases:
 
@@ -208,6 +208,9 @@ Example response:
   "is_indexed": true,
   "last_polled_at": "2026-04-11T18:05:00Z",
   "indexing_state": "indexed",
+  "is_recent_window_backfilled": true,
+  "recent_backfill_state": "completed",
+  "recent_backfill_completed_at": "2026-04-11T18:02:00Z",
   "is_backfilled": false,
   "backfill_state": "in_progress",
   "backfill_completed_at": null,
@@ -235,6 +238,9 @@ Example response:
   "is_indexed": true,
   "last_polled_at": "2026-04-11T18:05:00Z",
   "indexing_state": "indexed",
+  "is_recent_window_backfilled": true,
+  "recent_backfill_state": "completed",
+  "recent_backfill_completed_at": "2026-04-11T18:02:00Z",
   "is_backfilled": false,
   "backfill_state": "in_progress",
   "backfill_completed_at": null,
@@ -326,6 +332,7 @@ The SourceHut-specific assumptions are isolated to the service modules:
 - `git.sr.ht` polling assumes the actor's repositories are discoverable through the SourceHut GraphQL API
 - scheduled polling runs in-process, so it is not a distributed scheduler
 - newly requested actors are indexed asynchronously, so the first public read may be empty until a scheduler or manual poll runs
+- the recent visible-history window is prioritized first, but deep-history backfill can still take many scheduler passes for active users
 - full historical backfill can take many scheduler passes for active users because it runs in bounded batches
 - alias management is config-driven; there is no alias CRUD API yet
 - current deployment model is trusted-operator V1, not a public multi-tenant service

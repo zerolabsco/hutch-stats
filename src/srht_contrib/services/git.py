@@ -120,6 +120,24 @@ class GitIngestionService:
         return repositories
 
     def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
+        return self._fetch_backfill_batch(actor, cursor_state, since=None)
+
+    def fetch_recent_backfill_batch(
+        self,
+        actor: str,
+        cursor_state: dict | None = None,
+        *,
+        since: datetime,
+    ) -> BackfillBatchResult:
+        return self._fetch_backfill_batch(actor, cursor_state, since=since)
+
+    def _fetch_backfill_batch(
+        self,
+        actor: str,
+        cursor_state: dict | None,
+        *,
+        since: datetime | None,
+    ) -> BackfillBatchResult:
         state = {
             "discovery_cursor": None,
             "discovery_complete": False,
@@ -186,13 +204,18 @@ class GitIngestionService:
         log_page = repository.get("log") or {}
         commits = log_page.get("results") or []
         next_cursor = log_page.get("cursor")
-        events = [
-            normalized
-            for commit in commits
-            if isinstance(commit, dict)
-            for normalized in [self._normalize_commit(actor=actor, repo_name=repo_name, commit=commit)]
-            if normalized is not None
-        ]
+        events: list[NormalizedEvent] = []
+        stop_repository = False
+        for commit in commits:
+            if not isinstance(commit, dict):
+                continue
+            commit_time = parse_datetime((commit.get("author") or {}).get("time"))
+            if since is not None and commit_time < since:
+                stop_repository = True
+                break
+            normalized = self._normalize_commit(actor=actor, repo_name=repo_name, commit=commit)
+            if normalized is not None:
+                events.append(normalized)
         logger.info(
             "git backfill actor=%s repository=%s commits=%s next_cursor=%s",
             actor,
@@ -200,7 +223,7 @@ class GitIngestionService:
             len(commits),
             bool(next_cursor),
         )
-        if next_cursor:
+        if next_cursor and not stop_repository:
             state["current_repository"]["cursor"] = next_cursor
         else:
             state["current_repository"] = None
