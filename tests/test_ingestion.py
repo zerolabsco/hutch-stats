@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from srht_contrib.config import Settings
 from srht_contrib.jobs.poller import PollerService
-from srht_contrib.models import ServiceBackfillState, SyncState, TrackedActor, TrackedRepository
+from srht_contrib.models import ContributionEvent, ServiceBackfillState, SyncState, TrackedActor, TrackedRepository
 from srht_contrib.schemas import NormalizedEvent
 from srht_contrib.services.git import GitIngestionService, GitPollResult
 from srht_contrib.services.todo import TodoIngestionService, TodoPollResult
@@ -94,7 +94,7 @@ class BackfillingTodoService:
             repo_name="todo",
             resource_id="backfill-ticket",
             external_uid=f"todo:backfill:{actor}",
-            occurred_at=datetime(2024, 1, 1, 12, 0, tzinfo=UTC),
+            occurred_at=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
             weight=1.0,
             raw_payload_json=None,
         )
@@ -119,7 +119,13 @@ class QueueShrinkingTodoService:
     def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
         import copy
 
-        state = {"tracker_queue": ["t1", "t2"], "current_tracker": None, "current_ticket": None, "trackers_loaded": True, "trackers_cursor": None}
+        state = {
+            "tracker_queue": ["t1", "t2", "t3", "t4", "t5", "t6"],
+            "current_tracker": None,
+            "current_ticket": None,
+            "trackers_loaded": True,
+            "trackers_cursor": None,
+        }
         if cursor_state:
             state.update(copy.deepcopy(cursor_state))
         if not state["tracker_queue"]:
@@ -156,7 +162,12 @@ class QueueShrinkingGitService:
     def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
         import copy
 
-        state = {"repository_queue": ["r1", "r2"], "current_repository": None, "discovery_complete": True, "discovery_cursor": None}
+        state = {
+            "repository_queue": ["r1", "r2", "r3", "r4", "r5", "r6"],
+            "current_repository": None,
+            "discovery_complete": True,
+            "discovery_cursor": None,
+        }
         if cursor_state:
             state.update(copy.deepcopy(cursor_state))
         if not state["repository_queue"]:
@@ -561,9 +572,7 @@ def test_poll_marks_backfill_complete_and_persists_service_state(db_session) -> 
     assert tracked_actor is not None
     assert tracked_actor.recent_backfill_status == "completed"
     assert tracked_actor.recent_backfill_completed_at is not None
-    assert tracked_actor.backfill_status == "completed"
-    assert tracked_actor.backfill_completed_at is not None
-    assert [f"{state.scope}:{state.service}" for state in service_states] == ["full:git", "full:todo", "recent:git", "recent:todo"]
+    assert [f"{state.scope}:{state.service}" for state in service_states] == ["recent:git", "recent:todo"]
     assert all(state.status == "completed" for state in service_states)
 
 
@@ -576,7 +585,7 @@ def test_backfill_cursor_state_shrinks_across_repeated_polls(db_session) -> None
         for state in db_session.scalars(
             select(ServiceBackfillState)
             .where(ServiceBackfillState.actor == "~ccleberg")
-            .where(ServiceBackfillState.scope == "full")
+            .where(ServiceBackfillState.scope == "recent")
         ).all()
     }
 
@@ -586,11 +595,50 @@ def test_backfill_cursor_state_shrinks_across_repeated_polls(db_session) -> None
         for state in db_session.scalars(
             select(ServiceBackfillState)
             .where(ServiceBackfillState.actor == "~ccleberg")
-            .where(ServiceBackfillState.scope == "full")
+            .where(ServiceBackfillState.scope == "recent")
         ).all()
     }
 
-    assert first_states["git"]["repository_queue"] == ["r2"]
-    assert first_states["todo"]["tracker_queue"] == ["t2"]
-    assert second_states["git"]["repository_queue"] == []
-    assert second_states["todo"]["tracker_queue"] == []
+    assert first_states["git"]["repository_queue"] == ["r6"]
+    assert first_states["todo"]["tracker_queue"] == ["t6"]
+    assert second_states["git"] is None
+    assert second_states["todo"] is None
+
+
+def test_prune_old_events_removes_data_older_than_one_year(db_session) -> None:
+    poller = PollerService(todo_service=BackfillingTodoService(), git_service=EmptyGitService())
+    db_session.add_all(
+        [
+            ContributionEvent(
+                service="todo",
+                event_type="ticket_created",
+                actor="~ccleberg",
+                repo_name="todo",
+                resource_id="old",
+                external_uid="todo:old",
+                occurred_at=datetime(2025, 1, 1, 12, 0, tzinfo=UTC),
+                weight=1.0,
+                raw_payload_json=None,
+            ),
+            ContributionEvent(
+                service="todo",
+                event_type="ticket_created",
+                actor="~ccleberg",
+                repo_name="todo",
+                resource_id="recent",
+                external_uid="todo:recent",
+                occurred_at=datetime(2026, 4, 1, 12, 0, tzinfo=UTC),
+                weight=1.0,
+                raw_payload_json=None,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    deleted = poller.prune_old_events(db_session)
+    remaining = db_session.scalars(
+        select(ContributionEvent.external_uid).order_by(ContributionEvent.external_uid)
+    ).all()
+
+    assert deleted == 1
+    assert remaining == ["todo:recent"]

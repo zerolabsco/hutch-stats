@@ -211,9 +211,6 @@ Example response:
   "is_recent_window_backfilled": true,
   "recent_backfill_state": "completed",
   "recent_backfill_completed_at": "2026-04-11T18:02:00Z",
-  "is_backfilled": false,
-  "backfill_state": "in_progress",
-  "backfill_completed_at": null,
   "days": [
     {"date": "2026-03-28", "count": 3, "score": 3.5},
     {"date": "2026-03-29", "count": 0, "score": 0.0},
@@ -241,9 +238,6 @@ Example response:
   "is_recent_window_backfilled": true,
   "recent_backfill_state": "completed",
   "recent_backfill_completed_at": "2026-04-11T18:02:00Z",
-  "is_backfilled": false,
-  "backfill_state": "in_progress",
-  "backfill_completed_at": null,
   "total_events": 42,
   "total_score": 37.5,
   "active_days": 18,
@@ -326,14 +320,15 @@ The SourceHut-specific assumptions are isolated to the service modules:
 
 - `src/srht_contrib/services/todo.py` uses the authenticated `events(cursor)` feed first, then falls back to tracker/ticket event traversal for reliable contribution discovery.
 - `src/srht_contrib/services/git.py` discovers owned repositories for an actor, polls each repository `log(cursor)`, and attributes commits through the configured alias map.
+- the service only retains the most recent 365 days of contribution history and periodically prunes older rows
 
 ## Known Limitations
 
 - `git.sr.ht` polling assumes the actor's repositories are discoverable through the SourceHut GraphQL API
 - scheduled polling runs in-process, so it is not a distributed scheduler
 - newly requested actors are indexed asynchronously, so the first public read may be empty until a scheduler or manual poll runs
-- the recent visible-history window is prioritized first, but deep-history backfill can still take many scheduler passes for active users
-- full historical backfill can take many scheduler passes for active users because it runs in bounded batches
+- the service is intentionally limited to a rolling one-year history window; older activity is not retained
+- one-year backfill still runs in bounded batches, so a newly requested actor may take multiple scheduler passes before their visible graph is fully filled in
 - alias management is config-driven; there is no alias CRUD API yet
 - current deployment model is trusted-operator V1, not a public multi-tenant service
 

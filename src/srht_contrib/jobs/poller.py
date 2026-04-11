@@ -13,14 +13,13 @@ from srht_contrib.schemas import NormalizedEvent
 from srht_contrib.services.git import GitIngestionService
 from srht_contrib.services.srht_client import SourceHutClientError
 from srht_contrib.services.todo import TodoIngestionService
+from srht_contrib.utils.retention import RETENTION_DAYS, prune_contribution_events
 from srht_contrib.utils.repositories import canonicalize_repository_name
 
 
 logger = logging.getLogger(__name__)
 SYNC_OVERLAP = timedelta(hours=24)
-RECENT_BACKFILL_DAYS = 365
 RECENT_BACKFILL_BATCHES_PER_SERVICE = 5
-FULL_BACKFILL_BATCHES_PER_SERVICE = 1
 
 
 class PollerService:
@@ -61,6 +60,9 @@ class PollerService:
                 logger.exception("Scheduled poll failed for actor=%s", actor)
             except Exception:
                 logger.exception("Unexpected scheduled poll failure for actor=%s", actor)
+        deleted = self.prune_old_events(db)
+        if deleted:
+            logger.info("Pruned %s contribution events older than %s days", deleted, RETENTION_DAYS)
         return results
 
     def track_actor_request(self, db: Session, actor: str, *, update_last_requested: bool = True) -> TrackedActor:
@@ -70,7 +72,6 @@ class PollerService:
                 actor=actor,
                 is_active=True,
                 recent_backfill_status="pending",
-                backfill_status="pending",
             )
             db.add(tracked_actor)
 
@@ -185,11 +186,11 @@ class PollerService:
 
     def _run_backfill_batches(self, db: Session, actor: str) -> int:
         tracked_actor = self.track_actor_request(db, actor, update_last_requested=False)
-        if tracked_actor.recent_backfill_status == "completed" and tracked_actor.backfill_status == "completed":
+        if tracked_actor.recent_backfill_status == "completed":
             return 0
 
         now = datetime.now(tz=UTC)
-        recent_since = now - timedelta(days=RECENT_BACKFILL_DAYS)
+        recent_since = now - timedelta(days=RETENTION_DAYS)
         db.add(tracked_actor)
         db.flush()
         total_inserted = 0
@@ -220,34 +221,6 @@ class PollerService:
                 tracked_actor.recent_backfill_status = "completed"
                 tracked_actor.recent_backfill_completed_at = datetime.now(tz=UTC)
                 tracked_actor.last_recent_backfill_error = None
-            db.add(tracked_actor)
-            db.flush()
-
-        if tracked_actor.recent_backfill_status == "completed" and tracked_actor.backfill_status != "completed":
-            if tracked_actor.backfill_started_at is None:
-                tracked_actor.backfill_started_at = now
-            tracked_actor.backfill_status = "in_progress"
-            tracked_actor.last_backfill_error = None
-            total_inserted += self._run_backfill_scope(
-                db,
-                actor=actor,
-                scope="full",
-                services=[
-                    (self.todo_service.service_name, self.todo_service.fetch_backfill_batch),
-                    (self.git_service.service_name, self.git_service.fetch_backfill_batch),
-                ],
-                batches_per_service=FULL_BACKFILL_BATCHES_PER_SERVICE,
-                since=None,
-            )
-            full_statuses = db.scalars(
-                select(ServiceBackfillState.status)
-                .where(ServiceBackfillState.actor == actor)
-                .where(ServiceBackfillState.scope == "full")
-            ).all()
-            if full_statuses and all(status == "completed" for status in full_statuses):
-                tracked_actor.backfill_status = "completed"
-                tracked_actor.backfill_completed_at = datetime.now(tz=UTC)
-                tracked_actor.last_backfill_error = None
             db.add(tracked_actor)
             db.flush()
 
@@ -328,12 +301,8 @@ class PollerService:
                     state.status = "error"
                     state.last_error = str(exc)
                     state.updated_at = datetime.now(tz=UTC)
-                    if scope == "recent":
-                        tracked_actor.recent_backfill_status = "error"
-                        tracked_actor.last_recent_backfill_error = str(exc)
-                    else:
-                        tracked_actor.backfill_status = "error"
-                        tracked_actor.last_backfill_error = str(exc)
+                    tracked_actor.recent_backfill_status = "error"
+                    tracked_actor.last_recent_backfill_error = str(exc)
                     db.add(state)
                     db.add(tracked_actor)
                     db.flush()
@@ -343,3 +312,8 @@ class PollerService:
             db.flush()
 
         return total_inserted
+
+    def prune_old_events(self, db: Session) -> int:
+        deleted = prune_contribution_events(db)
+        db.commit()
+        return deleted

@@ -140,9 +140,6 @@ Response `200 OK`:
   "is_recent_window_backfilled": false,
   "recent_backfill_state": "in_progress",
   "recent_backfill_completed_at": null,
-  "is_backfilled": false,
-  "backfill_state": "in_progress",
-  "backfill_completed_at": null,
   "days": [
     { "date": "2026-03-01", "count": 0, "score": 0.0 },
     { "date": "2026-03-02", "count": 3, "score": 2.5 }
@@ -158,12 +155,9 @@ Response fields:
 - `is_indexed` boolean: whether the service has already completed at least one successful recent/incremental poll for this actor
 - `last_polled_at` string or `null`: most recent successful poll time, if any
 - `indexing_state` string: one of `pending`, `indexed`, or `error`
-- `is_recent_window_backfilled` boolean: whether the prioritized recent history window has completed backfill
+- `is_recent_window_backfilled` boolean: whether the service has finished filling the retained one-year history window
 - `recent_backfill_state` string: one of `pending`, `in_progress`, `completed`, or `error`
-- `recent_backfill_completed_at` string or `null`: when recent-window backfill completed, if it has
-- `is_backfilled` boolean: whether historical backfill has completed for this actor
-- `backfill_state` string: one of `pending`, `in_progress`, `completed`, or `error`
-- `backfill_completed_at` string or `null`: when full historical backfill completed, if it has
+- `recent_backfill_completed_at` string or `null`: when one-year backfill completed, if it has
 - `days` array:
   - `date` string `YYYY-MM-DD`
   - `count` integer contribution count for the day
@@ -175,14 +169,18 @@ Indexing state semantics:
 - `indexed`: at least one successful poll has completed for the actor
 - `error`: the most recent poll attempt for the actor failed
 
-Backfill state semantics:
+Recent backfill semantics:
 
-- recent-window fields:
-  - represent the prioritized visible-history window for client UX
-- `pending`: the actor has not started historical backfill yet
-- `in_progress`: historical backfill is actively progressing in bounded background batches
-- `completed`: historical backfill has completed for all supported services
+- the service only retains and backfills the most recent 365 days of activity
+- `pending`: the actor has not started one-year backfill yet
+- `in_progress`: one-year backfill is actively progressing in bounded background batches
+- `completed`: the retained one-year window is fully backfilled
 - `error`: the most recent backfill attempt failed
+
+Retention notes:
+
+- activity older than 365 days is not retained
+- scheduled polling periodically prunes contribution rows older than the retained window
 
 Possible errors:
 
@@ -218,7 +216,7 @@ Behavior notes:
 
 - This endpoint has the same actor-registration and alias-resolution behavior as the calendar endpoint.
 - This endpoint returns immediately and does not block on SourceHut polling.
-- This endpoint also reflects historical backfill state so clients can distinguish recent indexing from complete history.
+- This endpoint also reflects whether the retained one-year history window has been fully backfilled yet.
 
 Example:
 
@@ -239,9 +237,6 @@ Response `200 OK`:
   "is_recent_window_backfilled": true,
   "recent_backfill_state": "completed",
   "recent_backfill_completed_at": "2026-04-11T18:02:00Z",
-  "is_backfilled": false,
-  "backfill_state": "in_progress",
-  "backfill_completed_at": null,
   "total_events": 126,
   "total_score": 116.75,
   "active_days": 14,
@@ -261,9 +256,6 @@ Response fields:
 - `is_recent_window_backfilled` boolean
 - `recent_backfill_state` string
 - `recent_backfill_completed_at` string or `null`
-- `is_backfilled` boolean
-- `backfill_state` string
-- `backfill_completed_at` string or `null`
 - `total_events` integer
 - `total_score` float
 - `active_days` integer

@@ -31,9 +31,6 @@ class ContributionIndexMetadata(BaseModel):
     is_recent_window_backfilled: bool = False
     recent_backfill_state: Literal["pending", "in_progress", "completed", "error"] = "pending"
     recent_backfill_completed_at: datetime | None = None
-    is_backfilled: bool = False
-    backfill_state: Literal["pending", "in_progress", "completed", "error"] = "pending"
-    backfill_completed_at: datetime | None = None
 
 
 class ContributionCalendarResponse(ContributionIndexMetadata):
