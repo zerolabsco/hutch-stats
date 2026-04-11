@@ -115,3 +115,16 @@ def test_alembic_upgrade_adopts_legacy_schema(tmp_path) -> None:
     assert columns["actor"]["nullable"] is False
     assert "uq_tracked_repository_service_actor_name" in unique_constraints
     assert actor == Settings().default_actor
+
+
+def test_alembic_prefers_database_url_from_environment(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "env-selected.db"
+    database_url = f"sqlite:///{database_path}"
+    config = Config(str(Path(__file__).resolve().parent.parent / "alembic.ini"))
+    config.set_main_option("script_location", str(Path(__file__).resolve().parent.parent / "alembic"))
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(database_url))
+    assert "actor_aliases" in inspector.get_table_names()

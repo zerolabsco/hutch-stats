@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from logging.config import fileConfig
+import os
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
@@ -18,6 +19,10 @@ target_metadata = Base.metadata
 
 
 def get_database_url() -> str:
+    env_database_url = os.getenv("DATABASE_URL")
+    if env_database_url:
+        return env_database_url
+
     configured_url = config.get_main_option("sqlalchemy.url")
     if configured_url:
         return configured_url
