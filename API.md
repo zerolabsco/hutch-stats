@@ -1,6 +1,6 @@
 # API Reference
 
-`srht-contrib` exposes a small HTTP JSON API for health checks, contribution calendar reads, manual polling, and tracked repository management.
+`srht-contrib` exposes a small HTTP JSON API for health checks, contribution calendar reads, manual polling, and optional tracked repository management.
 
 Base URL examples:
 
@@ -45,13 +45,21 @@ Contribution ranges:
 - Contribution read endpoints return zero-filled days, so clients do not need to patch missing dates.
 - Public contribution reads also register the actor for background indexing. A first lookup may therefore return an empty graph while the scheduler catches up.
 
+Background polling:
+
+- When `ENABLE_SCHEDULER=true`, the service runs one poll immediately at startup and then continues polling on `POLL_INTERVAL_SECONDS`.
+- The scheduler always seeds `DEFAULT_ACTOR` as a known actor.
+- Public contribution reads register additional actors for later background polling.
+- Manual polling remains available through `POST /api/contributions/poll`.
+
 Repository names:
 
 - Repository create/update accepts either:
   - shorthand `repo-name`
   - canonical `~owner/repo-name`
 - Stored repository names are normalized to canonical `~owner/repo-name` form.
-- Tracked repositories are optional force-includes for git polling; owned repositories are auto-discovered per actor.
+- Git polling auto-discovers repositories owned by the actor through SourceHut.
+- Tracked repositories are optional force-includes for git polling; they are not required for normal owned-repository discovery.
 
 ## Health
 
@@ -97,6 +105,12 @@ Rules:
 - Or provide both `from` and `to`
 - Do not combine `year` with `from`/`to`
 
+Behavior notes:
+
+- This endpoint resolves aliases to a canonical actor before querying data.
+- This endpoint also registers the actor for background indexing and updates the actor's `last_requested_at` timestamp.
+- The response is always immediate; it does not wait for SourceHut polling to finish.
+
 Example by year:
 
 ```bash
@@ -139,6 +153,12 @@ Response fields:
   - `count` integer contribution count for the day
   - `score` float weighted score for the day
 
+Indexing state semantics:
+
+- `pending`: the actor is known but has not completed a successful poll yet
+- `indexed`: at least one successful poll has completed for the actor
+- `error`: the most recent poll attempt for the actor failed
+
 Possible errors:
 
 - `400 Bad Request` for invalid or conflicting date input
@@ -168,6 +188,11 @@ Query parameters:
 - `year` integer, optional
 - `from` string `YYYY-MM-DD`, optional
 - `to` string `YYYY-MM-DD`, optional
+
+Behavior notes:
+
+- This endpoint has the same actor-registration and alias-resolution behavior as the calendar endpoint.
+- This endpoint returns immediately and does not block on SourceHut polling.
 
 Example:
 
@@ -247,6 +272,11 @@ Response fields:
 - `inserted_events` integer: number of newly inserted normalized events
 - `services` array of strings: currently `["todo", "git"]`
 
+Behavior notes:
+
+- Manual polling also updates the actor's indexing metadata.
+- Git polling auto-discovers the actor's owned repositories and unions in any configured tracked repositories.
+
 Possible errors:
 
 - `401 Unauthorized` if the API key is missing or invalid
@@ -272,7 +302,7 @@ Example `502`:
 
 All repository endpoints are protected and require `X-API-Key`.
 
-Tracked repositories are used by git polling. Each repository is associated with an actor and stored in canonical `~owner/repo` form.
+Tracked repositories are optional force-includes for git polling. Each repository is associated with an actor and stored in canonical `~owner/repo` form.
 
 ### `GET /api/repositories`
 
