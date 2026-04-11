@@ -1,0 +1,479 @@
+# API Reference
+
+`srht-contrib` exposes a small HTTP JSON API for health checks, contribution calendar reads, manual polling, and tracked repository management.
+
+Base URL examples:
+
+- Local development: `http://127.0.0.1:8000`
+- Deployed example: `https://hutch-stats.example.com`
+
+Content type:
+
+- Request bodies: `application/json`
+- Response bodies: `application/json`
+
+Authentication:
+
+- Public endpoints:
+  - `GET /health`
+  - `GET /api/contributions/{actor}`
+  - `GET /api/contributions/{actor}/stats`
+- Protected endpoints require `X-API-Key`:
+  - `POST /api/contributions/poll`
+  - all `/api/repositories*`
+
+Example protected header:
+
+```http
+X-API-Key: your-api-key
+```
+
+## Common Conventions
+
+Actors:
+
+- Actors are SourceHut canonical names such as `~your-user`.
+- Actor aliases may resolve to the canonical actor through configured alias mappings.
+
+Dates:
+
+- Query date format is `YYYY-MM-DD`.
+- `year` and `from`/`to` are mutually exclusive on contribution endpoints.
+
+Contribution ranges:
+
+- Contribution read endpoints return zero-filled days, so clients do not need to patch missing dates.
+
+Repository names:
+
+- Repository create/update accepts either:
+  - shorthand `repo-name`
+  - canonical `~owner/repo-name`
+- Stored repository names are normalized to canonical `~owner/repo-name` form.
+
+## Health
+
+### `GET /health`
+
+Returns a basic service health response.
+
+Auth:
+
+- Public
+
+Response `200 OK`:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+## Contributions
+
+### `GET /api/contributions/{actor}`
+
+Returns a contribution calendar for an actor over a year or explicit date range.
+
+Auth:
+
+- Public
+
+Path parameters:
+
+- `actor` string: SourceHut actor, for example `~your-user`
+
+Query parameters:
+
+- `year` integer, optional
+- `from` string `YYYY-MM-DD`, optional
+- `to` string `YYYY-MM-DD`, optional
+
+Rules:
+
+- Provide either `year`
+- Or provide both `from` and `to`
+- Do not combine `year` with `from`/`to`
+
+Example by year:
+
+```bash
+curl "http://127.0.0.1:8000/api/contributions/~your-user?year=2026"
+```
+
+Example by range:
+
+```bash
+curl "http://127.0.0.1:8000/api/contributions/~your-user?from=2026-03-01&to=2026-04-15"
+```
+
+Response `200 OK`:
+
+```json
+{
+  "actor": "~your-user",
+  "from": "2026-03-01",
+  "to": "2026-04-15",
+  "days": [
+    { "date": "2026-03-01", "count": 0, "score": 0.0 },
+    { "date": "2026-03-02", "count": 3, "score": 2.5 }
+  ]
+}
+```
+
+Response fields:
+
+- `actor` string: canonical actor after alias resolution
+- `from` string: inclusive start date
+- `to` string: inclusive end date
+- `days` array:
+  - `date` string `YYYY-MM-DD`
+  - `count` integer contribution count for the day
+  - `score` float weighted score for the day
+
+Possible errors:
+
+- `400 Bad Request` for invalid or conflicting date input
+
+Example `400`:
+
+```json
+{
+  "detail": "Provide `year` or both `from` and `to`."
+}
+```
+
+### `GET /api/contributions/{actor}/stats`
+
+Returns aggregated stats for the same date selection rules as the calendar endpoint.
+
+Auth:
+
+- Public
+
+Path parameters:
+
+- `actor` string
+
+Query parameters:
+
+- `year` integer, optional
+- `from` string `YYYY-MM-DD`, optional
+- `to` string `YYYY-MM-DD`, optional
+
+Example:
+
+```bash
+curl "http://127.0.0.1:8000/api/contributions/~your-user/stats?from=2026-03-01&to=2026-04-15"
+```
+
+Response `200 OK`:
+
+```json
+{
+  "actor": "~your-user",
+  "from": "2026-03-01",
+  "to": "2026-04-15",
+  "total_events": 126,
+  "total_score": 116.75,
+  "active_days": 14,
+  "longest_streak": 5,
+  "current_streak": 0
+}
+```
+
+Response fields:
+
+- `actor` string
+- `from` string
+- `to` string
+- `total_events` integer
+- `total_score` float
+- `active_days` integer
+- `longest_streak` integer
+- `current_streak` integer
+
+Possible errors:
+
+- `400 Bad Request` for invalid or conflicting date input
+
+### `POST /api/contributions/poll`
+
+Triggers a manual SourceHut poll for the given actor and stores any newly discovered events.
+
+Auth:
+
+- Requires `X-API-Key`
+
+Query parameters:
+
+- `actor` string: SourceHut actor to poll
+
+Example:
+
+```bash
+curl -X POST \
+  -H "X-API-Key: your-api-key" \
+  "http://127.0.0.1:8000/api/contributions/poll?actor=~your-user"
+```
+
+Response `200 OK`:
+
+```json
+{
+  "actor": "~your-user",
+  "inserted_events": 57,
+  "services": ["todo", "git"]
+}
+```
+
+Response fields:
+
+- `actor` string: canonical actor after alias resolution
+- `inserted_events` integer: number of newly inserted normalized events
+- `services` array of strings: currently `["todo", "git"]`
+
+Possible errors:
+
+- `401 Unauthorized` if the API key is missing or invalid
+- `502 Bad Gateway` if polling SourceHut fails
+
+Example `401`:
+
+```json
+{
+  "detail": "Invalid API key."
+}
+```
+
+Example `502`:
+
+```json
+{
+  "detail": "SourceHut polling failed: HTTP error from SourceHut: 502"
+}
+```
+
+## Tracked Repositories
+
+All repository endpoints are protected and require `X-API-Key`.
+
+Tracked repositories are used by git polling. Each repository is associated with an actor and stored in canonical `~owner/repo` form.
+
+### `GET /api/repositories`
+
+Lists tracked git repositories.
+
+Auth:
+
+- Requires `X-API-Key`
+
+Query parameters:
+
+- `actor` string, optional: filter to a canonical actor or alias
+
+Example:
+
+```bash
+curl \
+  -H "X-API-Key: your-api-key" \
+  "http://127.0.0.1:8000/api/repositories?actor=~your-user"
+```
+
+Response `200 OK`:
+
+```json
+[
+  {
+    "id": 1,
+    "service": "git",
+    "actor": "~your-user",
+    "repo_name": "~your-user/your-repo"
+  }
+]
+```
+
+### `GET /api/repositories/{repository_id}`
+
+Fetches one tracked repository by numeric ID.
+
+Auth:
+
+- Requires `X-API-Key`
+
+Path parameters:
+
+- `repository_id` integer
+
+Example:
+
+```bash
+curl \
+  -H "X-API-Key: your-api-key" \
+  "http://127.0.0.1:8000/api/repositories/1"
+```
+
+Response `200 OK`:
+
+```json
+{
+  "id": 1,
+  "service": "git",
+  "actor": "~your-user",
+  "repo_name": "~your-user/your-repo"
+}
+```
+
+Possible errors:
+
+- `404 Not Found` if the repository ID does not exist
+
+### `POST /api/repositories`
+
+Creates a tracked repository entry.
+
+Auth:
+
+- Requires `X-API-Key`
+
+Request body:
+
+```json
+{
+  "actor": "~your-user",
+  "repo_name": "your-repo"
+}
+```
+
+Example:
+
+```bash
+curl -X POST \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"actor":"~your-user","repo_name":"your-repo"}' \
+  "http://127.0.0.1:8000/api/repositories"
+```
+
+Response `201 Created`:
+
+```json
+{
+  "id": 1,
+  "service": "git",
+  "actor": "~your-user",
+  "repo_name": "~your-user/your-repo"
+}
+```
+
+Possible errors:
+
+- `401 Unauthorized` if the API key is missing or invalid
+- `409 Conflict` if the normalized repository already exists for that actor
+- `422 Unprocessable Content` if `actor` or `repo_name` is blank or malformed
+
+### `PATCH /api/repositories/{repository_id}`
+
+Updates an existing tracked repository.
+
+Auth:
+
+- Requires `X-API-Key`
+
+Path parameters:
+
+- `repository_id` integer
+
+Request body:
+
+```json
+{
+  "actor": "~your-user",
+  "repo_name": "~your-user/your-other-repo"
+}
+```
+
+Body rules:
+
+- At least one of `actor` or `repo_name` must be present
+
+Example:
+
+```bash
+curl -X PATCH \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"repo_name":"~your-user/your-other-repo"}' \
+  "http://127.0.0.1:8000/api/repositories/1"
+```
+
+Response `200 OK`:
+
+```json
+{
+  "id": 1,
+  "service": "git",
+  "actor": "~your-user",
+  "repo_name": "~your-user/your-other-repo"
+}
+```
+
+Possible errors:
+
+- `404 Not Found`
+- `409 Conflict`
+- `422 Unprocessable Content`
+
+### `DELETE /api/repositories/{repository_id}`
+
+Deletes a tracked repository.
+
+Auth:
+
+- Requires `X-API-Key`
+
+Path parameters:
+
+- `repository_id` integer
+
+Example:
+
+```bash
+curl -X DELETE \
+  -H "X-API-Key: your-api-key" \
+  "http://127.0.0.1:8000/api/repositories/1"
+```
+
+Response `204 No Content`
+
+Possible errors:
+
+- `404 Not Found`
+
+## Error Summary
+
+Common status codes:
+
+- `200 OK` successful read or manual poll
+- `201 Created` successful repository creation
+- `204 No Content` successful repository deletion
+- `400 Bad Request` invalid date parameters
+- `401 Unauthorized` missing or invalid API key
+- `404 Not Found` missing repository record
+- `409 Conflict` duplicate repository after normalization
+- `422 Unprocessable Content` invalid repository payload
+- `502 Bad Gateway` upstream SourceHut failure during poll
+
+## OpenAPI
+
+FastAPI also serves an OpenAPI document at:
+
+```text
+/openapi.json
+```
+
+If interactive docs are enabled by your deployment, the standard FastAPI docs may also be available at:
+
+```text
+/docs
+```
