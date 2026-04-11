@@ -1,0 +1,24 @@
+services:
+  hutch-stats:
+    build:
+      context: .
+    container_name: hutch-stats
+    ports:
+      - "8000:8000"
+    environment:
+      API_KEY: ${API_KEY}
+      ENABLE_SCHEDULER: "true"
+      SRHT_TOKEN: ${SRHT_TOKEN}
+      TODO_SRHT_ENDPOINT: ${TODO_SRHT_ENDPOINT:-https://todo.sr.ht/query}
+      GIT_SRHT_ENDPOINT: ${GIT_SRHT_ENDPOINT:-https://git.sr.ht/query}
+      DATABASE_URL: sqlite:////data/srht_contrib.db
+      DEFAULT_ACTOR: ${DEFAULT_ACTOR}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-900}
+      ACTOR_ALIASES_JSON: ${ACTOR_ALIASES_JSON:-{}}
+      GIT_TRACKED_REPOSITORIES: ${GIT_TRACKED_REPOSITORIES:-[]}
+    volumes:
+      - hutch-stats-data:/data
+    restart: unless-stopped
+
+volumes:
+  hutch-stats-data:
