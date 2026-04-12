@@ -65,6 +65,8 @@ class PollerService:
                 )
             )
             .order_by(
+                TrackedActor.priority_boosted_at.is_not(None).desc(),
+                TrackedActor.priority_boosted_at.desc(),
                 TrackedActor.next_poll_after.is_(None).desc(),
                 TrackedActor.next_poll_after,
                 TrackedActor.queued_for_discovery_at,
@@ -90,7 +92,14 @@ class PollerService:
             logger.info("Pruned %s contribution events older than %s days", deleted, RETENTION_DAYS)
         return results
 
-    def track_actor_request(self, db: Session, actor: str, *, update_last_requested: bool = True) -> TrackedActor:
+    def track_actor_request(
+        self,
+        db: Session,
+        actor: str,
+        *,
+        update_last_requested: bool = True,
+        prioritize: bool = False,
+    ) -> TrackedActor:
         tracked_actor = db.scalar(select(TrackedActor).where(TrackedActor.actor == actor))
         now = datetime.now(tz=UTC)
         if tracked_actor is None:
@@ -111,6 +120,9 @@ class PollerService:
             tracked_actor.next_poll_after = now
         if update_last_requested:
             tracked_actor.last_requested_at = now
+        if prioritize:
+            tracked_actor.priority_boosted_at = now
+            tracked_actor.next_poll_after = now
         db.flush()
         return tracked_actor
 
@@ -207,11 +219,13 @@ class PollerService:
             tracked_actor.discovery_state = "indexed"
             tracked_actor.last_polled_at = now
             tracked_actor.next_poll_after = now + timedelta(seconds=self.settings.indexed_actor_repoll_seconds)
+            tracked_actor.priority_boosted_at = None
         elif status == "error":
             tracked_actor.discovery_state = "error"
             tracked_actor.next_poll_after = now + timedelta(
                 seconds=self.settings.discovery_error_backoff_seconds * max(tracked_actor.poll_attempts, 1)
             )
+            tracked_actor.priority_boosted_at = None
         db.add(tracked_actor)
         db.flush()
 

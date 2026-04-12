@@ -7,6 +7,11 @@ from srht_contrib.main import create_app
 from srht_contrib.models import ContributionEvent, TrackedActor
 
 
+class _Closable:
+    def close(self) -> None:
+        return None
+
+
 def test_read_only_contribution_routes_are_public_and_write_routes_require_api_key(settings, db_engine, session_factory) -> None:
     app = create_app(settings, engine=db_engine, session_factory=session_factory)
     with TestClient(app) as open_client:
@@ -72,6 +77,24 @@ def test_public_read_registers_actor_for_lazy_indexing(client: TestClient, db_se
     assert tracked_actor is not None
     assert tracked_actor.is_active is True
     assert tracked_actor.last_requested_at is not None
+    assert tracked_actor.priority_boosted_at is None
+
+
+class RecordingPriorityPoller:
+    def __init__(self) -> None:
+        service = type("Service", (), {"client": _Closable()})()
+        self.todo_service = service
+        self.git_service = service
+        self.calls: list[tuple[str, bool]] = []
+
+    def track_actor_request(self, db, actor: str, *, update_last_requested: bool = True, prioritize: bool = False):
+        self.calls.append((actor, prioritize))
+
+    def poll_all(self, db, actor: str) -> int:
+        return 0
+
+    def poll_tracked_actors(self, db, default_actor: str | None = None) -> dict[str, int]:
+        return {}
 
 
 def test_contribution_stats_api(client: TestClient, db_session) -> None:
@@ -148,3 +171,25 @@ def test_contribution_routes_use_settings_backed_alias_resolution(settings, db_e
 
     assert response.status_code == 200
     assert response.json()["actor"] == "~ccleberg"
+
+
+def test_contribution_route_passes_explicit_priority_signal(settings, db_engine, session_factory) -> None:
+    poller = RecordingPriorityPoller()
+    app = create_app(settings, engine=db_engine, session_factory=session_factory, poller=poller)
+
+    with TestClient(app) as client:
+        response = client.get("/api/contributions/~ccleberg?from=2026-03-28&to=2026-03-30&prioritize_self=true")
+
+    assert response.status_code == 200
+    assert poller.calls == [("~ccleberg", True)]
+
+
+def test_contribution_stats_route_keeps_non_prioritized_registration_by_default(settings, db_engine, session_factory) -> None:
+    poller = RecordingPriorityPoller()
+    app = create_app(settings, engine=db_engine, session_factory=session_factory, poller=poller)
+
+    with TestClient(app) as client:
+        response = client.get("/api/contributions/~ccleberg/stats?from=2026-03-28&to=2026-03-30")
+
+    assert response.status_code == 200
+    assert poller.calls == [("~ccleberg", False)]

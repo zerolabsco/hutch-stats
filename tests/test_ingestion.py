@@ -711,6 +711,94 @@ def test_poll_tracked_actors_limits_to_due_batch_size(db_session) -> None:
     assert actors["~c"].poll_attempts == 0
 
 
+def test_track_actor_request_prioritize_marks_actor_boosted_and_due_now(db_session) -> None:
+    settings = make_settings(INDEXED_ACTOR_REPOLL_SECONDS=3600)
+    poller = PollerService(todo_service=RecordingTodoService(events_by_call=[[]]), git_service=EmptyGitService(), settings=settings)
+    future_due = datetime.now(tz=UTC) + timedelta(hours=2)
+    db_session.add(
+        TrackedActor(
+            actor="~self",
+            is_active=True,
+            discovery_state="indexed",
+            queued_for_discovery_at=datetime.now(tz=UTC) - timedelta(hours=1),
+            next_poll_after=future_due,
+            recent_backfill_status="completed",
+        )
+    )
+    db_session.commit()
+
+    tracked_actor = poller.track_actor_request(db_session, "~self", prioritize=True)
+
+    assert tracked_actor.priority_boosted_at is not None
+    assert tracked_actor.next_poll_after is not None
+    assert tracked_actor.next_poll_after <= tracked_actor.priority_boosted_at
+
+
+def test_poll_tracked_actors_prioritizes_boosted_due_actor_first(db_session) -> None:
+    settings = make_settings(DISCOVERY_BATCH_SIZE=1, INDEXED_ACTOR_REPOLL_SECONDS=3600)
+    todo_service = RecordingTodoService(events_by_call=[[]])
+    poller = PollerService(todo_service=todo_service, git_service=EmptyGitService(), settings=settings)
+
+    now = datetime.now(tz=UTC)
+    db_session.add_all(
+        [
+            TrackedActor(
+                actor="~normal",
+                is_active=True,
+                discovery_state="queued",
+                queued_for_discovery_at=now - timedelta(minutes=10),
+                next_poll_after=now - timedelta(minutes=10),
+                recent_backfill_status="completed",
+            ),
+            TrackedActor(
+                actor="~self",
+                is_active=True,
+                discovery_state="queued",
+                queued_for_discovery_at=now - timedelta(minutes=1),
+                next_poll_after=now - timedelta(minutes=1),
+                priority_boosted_at=now,
+                recent_backfill_status="completed",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    results = poller.poll_tracked_actors(db_session)
+
+    assert list(results) == ["~self"]
+    remaining = {
+        actor.actor: actor.discovery_state
+        for actor in db_session.scalars(select(TrackedActor).order_by(TrackedActor.actor)).all()
+    }
+    assert remaining["~self"] == "indexed"
+    assert remaining["~normal"] == "queued"
+
+
+def test_successful_poll_clears_temporary_priority_boost(db_session) -> None:
+    settings = make_settings(INDEXED_ACTOR_REPOLL_SECONDS=3600)
+    poller = PollerService(todo_service=RecordingTodoService(events_by_call=[[]]), git_service=EmptyGitService(), settings=settings)
+    now = datetime.now(tz=UTC)
+    db_session.add(
+        TrackedActor(
+            actor="~self",
+            is_active=True,
+            discovery_state="queued",
+            queued_for_discovery_at=now - timedelta(minutes=1),
+            next_poll_after=now - timedelta(minutes=1),
+            priority_boosted_at=now - timedelta(seconds=30),
+            recent_backfill_status="completed",
+        )
+    )
+    db_session.commit()
+
+    poller.poll_all(db_session, "~self")
+
+    tracked_actor = db_session.scalar(select(TrackedActor).where(TrackedActor.actor == "~self"))
+    assert tracked_actor is not None
+    assert tracked_actor.discovery_state == "indexed"
+    assert tracked_actor.priority_boosted_at is None
+
+
 def test_enqueue_actors_staggers_without_polling(tmp_path, monkeypatch) -> None:
     database_path = tmp_path / "enqueue.db"
     username_path = tmp_path / "srht_usernames.txt"

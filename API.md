@@ -44,6 +44,7 @@ Contribution ranges:
 
 - Contribution read endpoints return zero-filled days, so clients do not need to patch missing dates.
 - Public contribution reads also register the actor for background indexing. A first lookup may therefore return an empty graph while the scheduler catches up.
+- Clients may add `prioritize_self=true` on contribution read endpoints to explicitly request temporary indexing priority for the signed-in user's own graph.
 - Incremental indexing and one-year backfill are separate. An actor can be recently indexed before the retained one-year window is fully filled in.
 - The service only retains and backfills the most recent 365 days of activity.
 
@@ -101,6 +102,7 @@ Query parameters:
 - `year` integer, optional
 - `from` string `YYYY-MM-DD`, optional
 - `to` string `YYYY-MM-DD`, optional
+- `prioritize_self` boolean, optional
 
 Rules:
 
@@ -112,6 +114,7 @@ Behavior notes:
 
 - This endpoint resolves aliases to a canonical actor before querying data.
 - This endpoint also registers the actor for background indexing and updates the actor's `last_requested_at` timestamp.
+- When `prioritize_self=true`, registration also applies a temporary scheduler boost so that due polls for that actor run ahead of the normal due queue.
 - The response is always immediate; it does not wait for SourceHut polling to finish.
 - One-year backfill runs in bounded background batches and may take multiple scheduler passes to complete.
 
@@ -211,10 +214,12 @@ Query parameters:
 - `year` integer, optional
 - `from` string `YYYY-MM-DD`, optional
 - `to` string `YYYY-MM-DD`, optional
+- `prioritize_self` boolean, optional
 
 Behavior notes:
 
 - This endpoint has the same actor-registration and alias-resolution behavior as the calendar endpoint.
+- When `prioritize_self=true`, registration also applies the same temporary scheduler boost as the calendar endpoint.
 - This endpoint returns immediately and does not block on SourceHut polling.
 - This endpoint also reflects whether the retained one-year history window has been fully backfilled yet.
 

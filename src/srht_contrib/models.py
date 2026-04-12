@@ -69,6 +69,7 @@ class TrackedActor(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     discovery_state: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
     queued_for_discovery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    priority_boosted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     next_poll_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     poll_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -122,7 +122,14 @@ def test_alembic_upgrade_adopts_legacy_schema(tmp_path) -> None:
     assert "discovered_repositories" in inspector.get_table_names()
     assert "tracked_actors" in inspector.get_table_names()
     assert "service_backfill_states" in inspector.get_table_names()
-    assert {"discovery_state", "queued_for_discovery_at", "next_poll_after", "last_claimed_at", "poll_attempts"} <= tracked_actor_columns
+    assert {
+        "discovery_state",
+        "queued_for_discovery_at",
+        "priority_boosted_at",
+        "next_poll_after",
+        "last_claimed_at",
+        "poll_attempts",
+    } <= tracked_actor_columns
 
 
 def test_alembic_prefers_database_url_from_environment(tmp_path, monkeypatch) -> None:

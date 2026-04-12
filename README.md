@@ -175,6 +175,8 @@ Scheduled polling only runs when `ENABLE_SCHEDULER=true`. The scheduler seeds `D
 
 The scheduler now drains actors gradually instead of polling every tracked actor on every pass. It only claims due actors, up to `DISCOVERY_BATCH_SIZE` per run, then reschedules indexed actors with `INDEXED_ACTOR_REPOLL_SECONDS` and failed actors with backoff based on `DISCOVERY_ERROR_BACKOFF_SECONDS`.
 
+Clients can explicitly signal that a public contribution read is for the signed-in user's own graph by sending `prioritize_self=true` on the read request. That temporarily boosts the actor to the front of the due queue for the next indexing pass, then clears the boost after the poll completes.
+
 ## Bulk Enqueue Without Immediate Indexing
 
 To durably queue a large username list without polling it immediately:

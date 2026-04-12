@@ -21,7 +21,7 @@ class InsertingPoller:
         self.git_service = service
         self.tracked_poll_calls: list[str] = []
 
-    def track_actor_request(self, db, actor: str, *, update_last_requested: bool = True):
+    def track_actor_request(self, db, actor: str, *, update_last_requested: bool = True, prioritize: bool = False):
         tracked_actor = db.scalar(select(TrackedActor).where(TrackedActor.actor == actor))
         if tracked_actor is None:
             tracked_actor = TrackedActor(actor=actor, is_active=True)
@@ -61,7 +61,7 @@ class FailingPoller:
         self.todo_service = service
         self.git_service = service
 
-    def track_actor_request(self, db, actor: str, *, update_last_requested: bool = True):
+    def track_actor_request(self, db, actor: str, *, update_last_requested: bool = True, prioritize: bool = False):
         tracked_actor = db.scalar(select(TrackedActor).where(TrackedActor.actor == actor))
         if tracked_actor is None:
             tracked_actor = TrackedActor(actor=actor, is_active=True)
