@@ -30,7 +30,7 @@ def build_poller(settings: Settings) -> PollerService:
     git_client = SourceHutGraphQLClient(settings.git_srht_endpoint, settings.srht_token)
     todo_service = TodoIngestionService(todo_client, settings)
     git_service = GitIngestionService(git_client, settings)
-    return PollerService(todo_service=todo_service, git_service=git_service)
+    return PollerService(todo_service=todo_service, git_service=git_service, settings=settings)
 
 
 def create_app(

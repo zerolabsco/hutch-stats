@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from srht_contrib.config import Settings
 from srht_contrib.models import ContributionEvent, ServiceBackfillState, SyncState, TrackedActor, TrackedRepository
 from srht_contrib.schemas import NormalizedEvent
 from srht_contrib.services.git import GitIngestionService
@@ -18,14 +19,19 @@ from srht_contrib.utils.repositories import canonicalize_repository_name
 
 
 logger = logging.getLogger(__name__)
-SYNC_OVERLAP = timedelta(hours=24)
 RECENT_BACKFILL_BATCHES_PER_SERVICE = 5
 
 
 class PollerService:
-    def __init__(self, todo_service: TodoIngestionService, git_service: GitIngestionService) -> None:
+    def __init__(
+        self,
+        todo_service: TodoIngestionService,
+        git_service: GitIngestionService,
+        settings: Settings,
+    ) -> None:
         self.todo_service = todo_service
         self.git_service = git_service
+        self._sync_overlap = timedelta(hours=settings.sync_overlap_hours)
 
     def poll_all(self, db: Session, actor: str) -> int:
         self.track_actor_request(db, actor, update_last_requested=False)
@@ -104,7 +110,7 @@ class PollerService:
         )
         since = datetime.now(tz=UTC) - timedelta(days=30)
         if state and state.cursor_value:
-            since = datetime.fromisoformat(state.cursor_value.replace("Z", "+00:00")).astimezone(UTC) - SYNC_OVERLAP
+            since = datetime.fromisoformat(state.cursor_value.replace("Z", "+00:00")).astimezone(UTC) - self._sync_overlap
             logger.info(
                 "Using sync cursor for %s actor=%s with overlap; since=%s",
                 service_name,

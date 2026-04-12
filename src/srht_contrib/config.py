@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     )
     default_actor: str = Field(default="~unknown", alias="DEFAULT_ACTOR")
     poll_interval_seconds: int = Field(default=900, alias="POLL_INTERVAL_SECONDS")
+    sync_overlap_hours: int = Field(default=1, alias="SYNC_OVERLAP_HOURS")
+    srht_request_delay_seconds: float = Field(default=0.5, alias="SRHT_REQUEST_DELAY_SECONDS")
+    git_repo_discovery_ttl_seconds: int = Field(default=3600, alias="GIT_REPO_DISCOVERY_TTL_SECONDS")
     actor_aliases_json: dict[str, list[str]] = Field(
         default_factory=dict,
         alias="ACTOR_ALIASES_JSON",
