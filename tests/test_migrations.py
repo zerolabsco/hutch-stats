@@ -21,6 +21,7 @@ def test_alembic_upgrade_creates_schema(tmp_path) -> None:
         "actor_aliases",
         "alembic_version",
         "contribution_events",
+        "discovered_repositories",
         "service_backfill_states",
         "sync_states",
         "tracked_actors",
@@ -117,6 +118,7 @@ def test_alembic_upgrade_adopts_legacy_schema(tmp_path) -> None:
     assert columns["actor"]["nullable"] is False
     assert "uq_tracked_repository_service_actor_name" in unique_constraints
     assert actor == Settings().default_actor
+    assert "discovered_repositories" in inspector.get_table_names()
     assert "tracked_actors" in inspector.get_table_names()
     assert "service_backfill_states" in inspector.get_table_names()
 
@@ -132,5 +134,6 @@ def test_alembic_prefers_database_url_from_environment(tmp_path, monkeypatch) ->
 
     inspector = inspect(create_engine(database_url))
     assert "actor_aliases" in inspector.get_table_names()
+    assert "discovered_repositories" in inspector.get_table_names()
     assert "tracked_actors" in inspector.get_table_names()
     assert "service_backfill_states" in inspector.get_table_names()

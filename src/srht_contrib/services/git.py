@@ -6,7 +6,11 @@ from datetime import UTC, datetime, timedelta
 import logging
 from typing import Any
 
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
+
 from srht_contrib.config import Settings
+from srht_contrib.models import DiscoveredRepository, TrackedRepository
 from srht_contrib.schemas import NormalizedEvent
 from srht_contrib.services.srht_client import SourceHutClientError, SourceHutGraphQLClient
 from srht_contrib.services.types import BackfillBatchResult
@@ -88,9 +92,10 @@ class GitIngestionService:
         actor: str,
         since: datetime | None = None,
         repositories: list[str] | None = None,
+        db: Session | None = None,
     ) -> GitPollResult:
         since_dt = ensure_utc(since or (datetime.now(tz=UTC) - timedelta(days=30)))
-        discovered_repositories = repositories or self._repositories_for_actor(actor)
+        discovered_repositories = repositories or self._repositories_for_actor(actor, db)
         if not discovered_repositories:
             logger.info("git poll skipped for actor=%s because no repositories were discovered", actor)
             return GitPollResult(events=[], cursor=datetime.now(tz=UTC).isoformat())
@@ -108,18 +113,44 @@ class GitIngestionService:
         logger.info("git poll complete for actor=%s normalized_events=%s", actor, len(events))
         return GitPollResult(events=events, cursor=datetime.now(tz=UTC).isoformat())
 
-    def _repositories_for_actor(self, actor: str) -> list[str]:
+    def _repositories_for_actor(self, actor: str, db: Session | None = None) -> list[str]:
         configured = {
             self._canonical_repository_name(actor, repository)
             for repository in self.settings.git_tracked_repositories
         }
-        discovered = set(self._discover_owned_repositories(actor))
-        repositories = sorted(configured | discovered)
+        tracked = set()
+        discovered = set()
+        now = datetime.now(tz=UTC)
+
+        if db is not None:
+            tracked = set(
+                db.scalars(
+                    select(TrackedRepository.repo_name)
+                    .where(TrackedRepository.service == self.service_name)
+                    .where(TrackedRepository.actor == actor)
+                ).all()
+            )
+            cutoff = now - timedelta(seconds=self.settings.git_repo_discovery_ttl_seconds)
+            discovered = set(
+                db.scalars(
+                    select(DiscoveredRepository.name)
+                    .where(DiscoveredRepository.actor == actor)
+                    .where(DiscoveredRepository.discovered_at > cutoff)
+                ).all()
+            )
+
+        if not discovered:
+            discovered = set(self._discover_owned_repositories(actor))
+            if db is not None:
+                self._refresh_discovered_repositories(db, actor, discovered, discovered_at=now)
+
+        repositories = sorted(configured | tracked | discovered)
         logger.info(
-            "git repositories selected for actor=%s count=%s configured=%s discovered=%s",
+            "git repositories selected for actor=%s count=%s configured=%s tracked=%s discovered=%s",
             actor,
             len(repositories),
             len(configured),
+            len(tracked),
             len(discovered),
         )
         return repositories
@@ -268,12 +299,32 @@ class GitIngestionService:
                 repository_owner = ((repository.get("owner") or {}).get("canonicalName") or actor).strip()
                 if not name or not repository_owner:
                     continue
-                repositories.append(f"{repository_owner}/{name}")
+                repo_name = f"{repository_owner}/{name}"
+                repositories.append(repo_name)
 
             if not cursor:
                 break
 
         return repositories
+
+    @staticmethod
+    def _refresh_discovered_repositories(
+        db: Session,
+        actor: str,
+        repositories: set[str],
+        *,
+        discovered_at: datetime,
+    ) -> None:
+        db.execute(delete(DiscoveredRepository).where(DiscoveredRepository.actor == actor))
+        for repository in sorted(repositories):
+            db.add(
+                DiscoveredRepository(
+                    actor=actor,
+                    name=repository,
+                    discovered_at=discovered_at,
+                )
+            )
+        db.flush()
 
     @staticmethod
     def _canonical_repository_name(default_actor: str, repository: str) -> str:

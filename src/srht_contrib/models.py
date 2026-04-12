@@ -81,6 +81,16 @@ class TrackedActor(Base):
     last_backfill_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class DiscoveredRepository(Base):
+    __tablename__ = "discovered_repositories"
+    __table_args__ = (UniqueConstraint("actor", "name", name="uq_discovered_repository_actor_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ServiceBackfillState(Base):
     __tablename__ = "service_backfill_states"
     __table_args__ = (UniqueConstraint("actor", "service", "scope", name="uq_service_backfill_state_actor_service_scope"),)

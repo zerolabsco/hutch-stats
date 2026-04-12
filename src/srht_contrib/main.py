@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 def build_poller(settings: Settings) -> PollerService:
-    todo_client = SourceHutGraphQLClient(settings.todo_srht_endpoint, settings.srht_token)
-    git_client = SourceHutGraphQLClient(settings.git_srht_endpoint, settings.srht_token)
+    todo_client = SourceHutGraphQLClient(settings.todo_srht_endpoint, settings.srht_token, request_delay=settings.srht_request_delay_seconds)
+    git_client = SourceHutGraphQLClient(settings.git_srht_endpoint, settings.srht_token, request_delay=settings.srht_request_delay_seconds)
     todo_service = TodoIngestionService(todo_client, settings)
     git_service = GitIngestionService(git_client, settings)
     return PollerService(todo_service=todo_service, git_service=git_service, settings=settings)

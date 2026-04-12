@@ -91,7 +91,6 @@ class PollerService:
         inserted = 0
         inserted += self._poll_service(db, actor, self.todo_service.service_name, self.todo_service.fetch_recent_events)
         self._sync_tracked_repositories(db, actor)
-        git_repositories = self._tracked_repositories_for_actor(db, actor)
         inserted += self._poll_service(
             db,
             actor,
@@ -99,7 +98,7 @@ class PollerService:
             lambda actor, since: self.git_service.fetch_recent_events(
                 actor=actor,
                 since=since,
-                repositories=git_repositories,
+                db=db,
             ),
         )
         return inserted
@@ -171,15 +170,6 @@ class PollerService:
                     )
                 )
         db.flush()
-
-    def _tracked_repositories_for_actor(self, db: Session, actor: str) -> list[str]:
-        rows = db.scalars(
-            select(TrackedRepository.repo_name)
-            .where(TrackedRepository.service == self.git_service.service_name)
-            .where(TrackedRepository.actor == actor)
-            .order_by(TrackedRepository.repo_name)
-        ).all()
-        return list(rows)
 
     def _update_tracked_actor_poll_state(self, db: Session, actor: str, status: str, error: str | None) -> None:
         tracked_actor = self.track_actor_request(db, actor, update_last_requested=False)

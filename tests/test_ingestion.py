@@ -274,7 +274,7 @@ def test_todo_ingestion_is_idempotent(db_session) -> None:
 
     todo_service = TodoIngestionService(StubClient(payload), settings)
     git_service = GitIngestionService(StubClient(payload={}), settings)
-    poller = PollerService(todo_service=todo_service, git_service=git_service)
+    poller = PollerService(todo_service=todo_service, git_service=git_service, settings=settings)
 
     first_inserted = poller.poll_all(db_session, "~ccleberg")
     second_inserted = poller.poll_all(db_session, "~ccleberg")
@@ -348,7 +348,7 @@ def test_todo_ingestion_falls_back_to_tracker_crawl(db_session) -> None:
     )
     todo_service = TodoIngestionService(client, settings)
     git_service = GitIngestionService(StubClient(payload={}), settings)
-    poller = PollerService(todo_service=todo_service, git_service=git_service)
+    poller = PollerService(todo_service=todo_service, git_service=git_service, settings=settings)
 
     inserted = poller.poll_all(db_session, "~ccleberg")
 
@@ -384,7 +384,7 @@ def test_unsupported_todo_changes_are_ignored(db_session) -> None:
 
     todo_service = TodoIngestionService(StubClient(payload), settings)
     git_service = GitIngestionService(StubClient(payload={}), settings)
-    poller = PollerService(todo_service=todo_service, git_service=git_service)
+    poller = PollerService(todo_service=todo_service, git_service=git_service, settings=settings)
 
     inserted = poller.poll_all(db_session, "~ccleberg")
 
@@ -430,7 +430,7 @@ def test_git_ingestion_normalizes_commit_aliases_and_repository_names(db_session
         settings,
     )
     git_service = GitIngestionService(StubClient(payloads_by_query={"query RepositoryLog": git_payload}), settings)
-    poller = PollerService(todo_service=todo_service, git_service=git_service)
+    poller = PollerService(todo_service=todo_service, git_service=git_service, settings=settings)
 
     inserted = poller.poll_all(db_session, "~ccleberg")
 
@@ -451,7 +451,11 @@ def test_git_ingestion_auto_discovers_owned_repositories(db_session) -> None:
                 "user": {
                     "repositories": {
                         "results": [
-                            {"name": "Hutch", "owner": {"canonicalName": "~ccleberg"}},
+                            {
+                                "name": "Hutch",
+                                "visibility": "PUBLIC",
+                                "owner": {"canonicalName": "~ccleberg"},
+                            },
                         ],
                         "cursor": None,
                     }
@@ -493,7 +497,7 @@ def test_git_ingestion_auto_discovers_owned_repositories(db_session) -> None:
         settings,
     )
     git_service = GitIngestionService(client, settings)
-    poller = PollerService(todo_service=todo_service, git_service=git_service)
+    poller = PollerService(todo_service=todo_service, git_service=git_service, settings=settings)
 
     inserted = poller.poll_all(db_session, "~ccleberg")
 
@@ -502,6 +506,7 @@ def test_git_ingestion_auto_discovers_owned_repositories(db_session) -> None:
 
 
 def test_sync_overlap_reuses_cursor_window_and_suppresses_duplicates(db_session) -> None:
+    settings = make_settings()
     event = NormalizedEvent(
         service="todo",
         event_type="ticket_created",
@@ -514,7 +519,7 @@ def test_sync_overlap_reuses_cursor_window_and_suppresses_duplicates(db_session)
         raw_payload_json=None,
     )
     todo_service = RecordingTodoService(events_by_call=[[event], [event]])
-    poller = PollerService(todo_service=todo_service, git_service=EmptyGitService())
+    poller = PollerService(todo_service=todo_service, git_service=EmptyGitService(), settings=settings)
 
     first_inserted = poller.poll_all(db_session, "~ccleberg")
     second_inserted = poller.poll_all(db_session, "~ccleberg")
@@ -529,6 +534,7 @@ def test_sync_overlap_reuses_cursor_window_and_suppresses_duplicates(db_session)
 
 
 def test_scheduled_poll_polls_known_actors_and_seeds_default_actor(db_session) -> None:
+    settings = make_settings()
     event = NormalizedEvent(
         service="todo",
         event_type="ticket_created",
@@ -541,7 +547,7 @@ def test_scheduled_poll_polls_known_actors_and_seeds_default_actor(db_session) -
         raw_payload_json=None,
     )
     todo_service = RecordingTodoService(events_by_call=[[], [event]])
-    poller = PollerService(todo_service=todo_service, git_service=EmptyGitService())
+    poller = PollerService(todo_service=todo_service, git_service=EmptyGitService(), settings=settings)
 
     db_session.add(TrackedActor(actor="~known", is_active=True))
     db_session.commit()
@@ -557,7 +563,8 @@ def test_scheduled_poll_polls_known_actors_and_seeds_default_actor(db_session) -
 
 
 def test_poll_marks_backfill_complete_and_persists_service_state(db_session) -> None:
-    poller = PollerService(todo_service=BackfillingTodoService(), git_service=EmptyGitService())
+    settings = make_settings()
+    poller = PollerService(todo_service=BackfillingTodoService(), git_service=EmptyGitService(), settings=settings)
 
     inserted = poller.poll_all(db_session, "~ccleberg")
 
@@ -577,7 +584,12 @@ def test_poll_marks_backfill_complete_and_persists_service_state(db_session) -> 
 
 
 def test_backfill_cursor_state_shrinks_across_repeated_polls(db_session) -> None:
-    poller = PollerService(todo_service=QueueShrinkingTodoService(), git_service=QueueShrinkingGitService())
+    settings = make_settings()
+    poller = PollerService(
+        todo_service=QueueShrinkingTodoService(),
+        git_service=QueueShrinkingGitService(),
+        settings=settings,
+    )
 
     poller.poll_all(db_session, "~ccleberg")
     first_states = {
@@ -606,7 +618,8 @@ def test_backfill_cursor_state_shrinks_across_repeated_polls(db_session) -> None
 
 
 def test_prune_old_events_removes_data_older_than_one_year(db_session) -> None:
-    poller = PollerService(todo_service=BackfillingTodoService(), git_service=EmptyGitService())
+    settings = make_settings()
+    poller = PollerService(todo_service=BackfillingTodoService(), git_service=EmptyGitService(), settings=settings)
     db_session.add_all(
         [
             ContributionEvent(

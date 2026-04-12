@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -27,11 +28,13 @@ class SourceHutGraphQLClient:
         *,
         timeout: float = 15.0,
         max_retries: int = 2,
+        request_delay: float = 0.5,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.timeout = timeout
         self.max_retries = max_retries
+        self.request_delay = request_delay
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -42,7 +45,12 @@ class SourceHutGraphQLClient:
         payload = {"query": query, "variables": variables or {}}
         attempts = self.max_retries + 1
 
-        for attempt in range(1, attempts + 1):
+        for attempt in range(attempts):
+            if attempt > 0:
+                time.sleep(2 ** (attempt - 1))
+            elif self.request_delay > 0:
+                time.sleep(self.request_delay)
+
             try:
                 response = self._client.post(self.endpoint, json=payload)
                 response.raise_for_status()
@@ -51,21 +59,21 @@ class SourceHutGraphQLClient:
                 logger.warning(
                     "SourceHut HTTP failure from %s on attempt %s/%s: status=%s",
                     self.endpoint,
-                    attempt,
+                    attempt + 1,
                     attempts,
                     exc.response.status_code,
                 )
-                if exc.response.status_code >= 500 and attempt < attempts:
+                if exc.response.status_code >= 500 and attempt < attempts - 1:
                     continue
                 raise SourceHutClientError(f"HTTP error from SourceHut: {exc.response.status_code}") from exc
             except httpx.HTTPError as exc:
                 logger.warning(
                     "SourceHut network failure from %s on attempt %s/%s",
                     self.endpoint,
-                    attempt,
+                    attempt + 1,
                     attempts,
                 )
-                if attempt < attempts:
+                if attempt < attempts - 1:
                     continue
                 raise SourceHutClientError("Network error while contacting SourceHut") from exc
 
