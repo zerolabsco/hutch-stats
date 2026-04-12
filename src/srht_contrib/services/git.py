@@ -8,7 +8,7 @@ from typing import Any
 
 from srht_contrib.config import Settings
 from srht_contrib.schemas import NormalizedEvent
-from srht_contrib.services.srht_client import SourceHutGraphQLClient
+from srht_contrib.services.srht_client import SourceHutClientError, SourceHutGraphQLClient
 from srht_contrib.services.types import BackfillBatchResult
 from srht_contrib.utils.dates import ensure_utc, parse_datetime
 from srht_contrib.utils.identity import ActorIdentityResolver
@@ -97,7 +97,11 @@ class GitIngestionService:
         events: list[NormalizedEvent] = []
         for repository in discovered_repositories:
             owner, repo_name = self._split_repository(actor, repository)
-            repo_events = self._fetch_repository_commits(actor=actor, owner=owner, repo_name=repo_name, since=since_dt)
+            try:
+                repo_events = self._fetch_repository_commits(actor=actor, owner=owner, repo_name=repo_name, since=since_dt)
+            except SourceHutClientError:
+                logger.warning("git poll skipped repository=%s/%s due to GraphQL error", owner, repo_name, exc_info=True)
+                continue
             events.extend(repo_events)
 
         logger.info("git poll complete for actor=%s normalized_events=%s", actor, len(events))
