@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import re
 
 from sqlalchemy import select
 
@@ -11,19 +12,31 @@ from srht_contrib.db import make_session_factory
 from srht_contrib.models import TrackedActor
 
 
+USERNAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$")
+
+
+def _normalize_actor(raw_username: str) -> str | None:
+    username = raw_username.strip()
+    if not username or username.startswith("#"):
+        return None
+    if username.startswith("~"):
+        username = username[1:]
+    if not USERNAME_RE.fullmatch(username):
+        return None
+    return f"~{username}"
+
+
 def _iter_usernames(path: Path) -> list[str]:
     usernames: list[str] = []
     seen: set[str] = set()
     for raw_line in path.read_text(encoding="utf-8").splitlines():
-        username = raw_line.strip()
-        if not username or username.startswith("#"):
+        actor = _normalize_actor(raw_line)
+        if actor is None:
             continue
-        if not username.startswith("~"):
-            username = f"~{username}"
-        if username in seen:
+        if actor in seen:
             continue
-        seen.add(username)
-        usernames.append(username)
+        seen.add(actor)
+        usernames.append(actor)
     return usernames
 
 

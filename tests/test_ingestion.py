@@ -738,3 +738,27 @@ def test_enqueue_actors_staggers_without_polling(tmp_path, monkeypatch) -> None:
     assert actors[0].next_poll_after == queued_at.replace(tzinfo=None)
     assert actors[1].next_poll_after == (queued_at + timedelta(seconds=60)).replace(tzinfo=None)
     assert actors[2].next_poll_after == (queued_at + timedelta(seconds=120)).replace(tzinfo=None)
+
+
+def test_enqueue_actors_skips_invalid_usernames(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "enqueue-invalid.db"
+    username_path = tmp_path / "srht_usernames.txt"
+    username_path.write_text("-0\n.\n~bad-\nvalid_user\nok.ok\n", encoding="utf-8")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("SRHT_TOKEN", "test-token")
+    monkeypatch.setenv("DEFAULT_ACTOR", "~ccleberg")
+
+    from srht_contrib.db import Base, make_engine, make_session_factory
+
+    settings = Settings()
+    engine = make_engine(settings)
+    Base.metadata.create_all(bind=engine)
+    session_factory = make_session_factory(settings)
+
+    inserted = enqueue_actors(Path(username_path), stagger_seconds=60)
+
+    with session_factory() as db:
+        actors = db.scalars(select(TrackedActor).order_by(TrackedActor.actor)).all()
+
+    assert inserted == 2
+    assert [actor.actor for actor in actors] == ["~ok.ok", "~valid_user"]
