@@ -14,7 +14,7 @@ The current V1 is intentionally narrow and production-oriented:
 
 ## What It Does
 
-The service collects SourceHut activity from one or more sr.ht GraphQL services, turns those records into a canonical event shape, aggregates activity by day, and returns zero-filled calendar ranges so the client never has to patch missing dates. It performs recent incremental polling, prioritizes a recent visible-history window for faster UX, and then continues bounded historical backfill.
+The service collects SourceHut activity from one or more sr.ht GraphQL services, turns those records into a canonical event shape, aggregates activity by day, and returns zero-filled calendar ranges so the client never has to patch missing dates. It performs recent incremental polling, backfills the most recent 365 days for newly requested actors, and prunes older activity from storage.
 
 Example use cases:
 
@@ -165,7 +165,7 @@ Example response:
 }
 ```
 
-Scheduled polling only runs when `ENABLE_SCHEDULER=true`. The scheduler seeds `DEFAULT_ACTOR` as an initial known actor, runs one poll immediately at startup, and public contribution reads register additional actors for later background polling and historical backfill.
+Scheduled polling only runs when `ENABLE_SCHEDULER=true`. The scheduler seeds `DEFAULT_ACTOR` as an initial known actor, runs one poll immediately at startup, and public contribution reads register additional actors for later background polling and one-year backfill.
 
 For `git.sr.ht`, owned repositories are auto-discovered for the actor. `GIT_TRACKED_REPOSITORIES` can still be used to union in extra repositories. Entries may be either:
 

@@ -44,8 +44,8 @@ Contribution ranges:
 
 - Contribution read endpoints return zero-filled days, so clients do not need to patch missing dates.
 - Public contribution reads also register the actor for background indexing. A first lookup may therefore return an empty graph while the scheduler catches up.
-- Incremental indexing and historical backfill are separate. An actor can be recently indexed without being fully backfilled yet.
-- The service prioritizes a recent visible history window first, then continues deep-history backfill afterward.
+- Incremental indexing and one-year backfill are separate. An actor can be recently indexed before the retained one-year window is fully filled in.
+- The service only retains and backfills the most recent 365 days of activity.
 
 Background polling:
 
@@ -112,8 +112,7 @@ Behavior notes:
 - This endpoint resolves aliases to a canonical actor before querying data.
 - This endpoint also registers the actor for background indexing and updates the actor's `last_requested_at` timestamp.
 - The response is always immediate; it does not wait for SourceHut polling to finish.
-- Historical backfill runs in bounded background batches and may take multiple scheduler passes to complete.
-- The recent visible window is prioritized before full-history backfill so clients can show a useful graph sooner.
+- One-year backfill runs in bounded background batches and may take multiple scheduler passes to complete.
 
 Example by year:
 
@@ -305,7 +304,7 @@ Response fields:
 Behavior notes:
 
 - Manual polling also updates the actor's indexing metadata.
-- Manual polling also advances historical backfill by one bounded batch per supported service.
+- Manual polling also advances one-year backfill by bounded batches for each supported service.
 - Git polling auto-discovers the actor's owned repositories and unions in any configured tracked repositories.
 
 Possible errors:
