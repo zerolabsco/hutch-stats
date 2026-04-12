@@ -14,10 +14,15 @@ services:
       DATABASE_URL: sqlite:////data/srht_contrib.db
       DEFAULT_ACTOR: ${DEFAULT_ACTOR}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-900}
+      DISCOVERY_BATCH_SIZE: ${DISCOVERY_BATCH_SIZE:-5}
+      INDEXED_ACTOR_REPOLL_SECONDS: ${INDEXED_ACTOR_REPOLL_SECONDS:-21600}
+      DISCOVERY_ERROR_BACKOFF_SECONDS: ${DISCOVERY_ERROR_BACKOFF_SECONDS:-3600}
+      SRHT_REQUEST_DELAY_SECONDS: ${SRHT_REQUEST_DELAY_SECONDS:-0.5}
       ACTOR_ALIASES_JSON: ${ACTOR_ALIASES_JSON:-{}}
       GIT_TRACKED_REPOSITORIES: ${GIT_TRACKED_REPOSITORIES:-[]}
     volumes:
       - hutch-stats-data:/data
+      - ./srht_usernames.txt:/app/srht_usernames.txt:ro
     restart: unless-stopped
 
 volumes:
