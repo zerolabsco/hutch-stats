@@ -34,6 +34,9 @@ def enqueue_actors(username_file: Path, *, stagger_seconds: int = 300, start_at:
     queued_at = start_at or datetime.now(tz=UTC)
     inserted = 0
 
+    batch_size = 250
+    queued_in_batch = 0
+
     with session_factory() as db:
         for index, actor in enumerate(usernames):
             next_poll_after = queued_at + timedelta(seconds=index * stagger_seconds)
@@ -49,15 +52,21 @@ def enqueue_actors(username_file: Path, *, stagger_seconds: int = 300, start_at:
                 )
                 db.add(tracked_actor)
                 inserted += 1
-                continue
+            else:
+                tracked_actor.is_active = True
+                if tracked_actor.queued_for_discovery_at is None:
+                    tracked_actor.queued_for_discovery_at = queued_at
+                if tracked_actor.last_polled_at is None and tracked_actor.discovery_state != "indexed":
+                    tracked_actor.discovery_state = "queued"
+                    tracked_actor.next_poll_after = next_poll_after
 
-            tracked_actor.is_active = True
-            if tracked_actor.queued_for_discovery_at is None:
-                tracked_actor.queued_for_discovery_at = queued_at
-            if tracked_actor.last_polled_at is None and tracked_actor.discovery_state != "indexed":
-                tracked_actor.discovery_state = "queued"
-                tracked_actor.next_poll_after = next_poll_after
-        db.commit()
+            queued_in_batch += 1
+            if queued_in_batch >= batch_size:
+                db.commit()
+                queued_in_batch = 0
+
+        if queued_in_batch:
+            db.commit()
 
     return inserted
 
