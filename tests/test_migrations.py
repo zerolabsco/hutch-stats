@@ -111,6 +111,7 @@ def test_alembic_upgrade_adopts_legacy_schema(tmp_path) -> None:
 
     inspector = inspect(create_engine(database_url))
     columns = {column["name"]: column for column in inspector.get_columns("tracked_repositories")}
+    tracked_actor_columns = {column["name"] for column in inspector.get_columns("tracked_actors")}
     unique_constraints = {constraint["name"] for constraint in inspector.get_unique_constraints("tracked_repositories")}
     with create_engine(database_url).connect() as connection:
         actor = connection.execute(text("SELECT actor FROM tracked_repositories WHERE id = 1")).scalar_one()
@@ -121,6 +122,7 @@ def test_alembic_upgrade_adopts_legacy_schema(tmp_path) -> None:
     assert "discovered_repositories" in inspector.get_table_names()
     assert "tracked_actors" in inspector.get_table_names()
     assert "service_backfill_states" in inspector.get_table_names()
+    assert {"discovery_state", "queued_for_discovery_at", "next_poll_after", "last_claimed_at", "poll_attempts"} <= tracked_actor_columns
 
 
 def test_alembic_prefers_database_url_from_environment(tmp_path, monkeypatch) -> None:

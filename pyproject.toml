@@ -24,6 +24,9 @@ dev = [
   "pytest>=8.2,<9.0",
 ]
 
+[project.scripts]
+srht-enqueue-actors = "srht_contrib.scripts.enqueue_actors:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

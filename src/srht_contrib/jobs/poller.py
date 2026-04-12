@@ -4,7 +4,7 @@ import copy
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -31,6 +31,7 @@ class PollerService:
     ) -> None:
         self.todo_service = todo_service
         self.git_service = git_service
+        self.settings = settings
         self._sync_overlap = timedelta(hours=settings.sync_overlap_hours)
 
     def poll_all(self, db: Session, actor: str) -> int:
@@ -57,9 +58,27 @@ class PollerService:
         actors = db.scalars(
             select(TrackedActor.actor)
             .where(TrackedActor.is_active.is_(True))
-            .order_by(TrackedActor.last_requested_at.is_(None), TrackedActor.last_requested_at.desc(), TrackedActor.actor)
+            .where(
+                or_(
+                    TrackedActor.next_poll_after.is_(None),
+                    TrackedActor.next_poll_after <= datetime.now(tz=UTC),
+                )
+            )
+            .order_by(
+                TrackedActor.next_poll_after.is_(None).desc(),
+                TrackedActor.next_poll_after,
+                TrackedActor.queued_for_discovery_at,
+                TrackedActor.actor,
+            )
+            .limit(self.settings.discovery_batch_size)
         ).all()
         for actor in actors:
+            claimed_actor = self.track_actor_request(db, actor, update_last_requested=False)
+            claimed_actor.discovery_state = "in_progress"
+            claimed_actor.last_claimed_at = datetime.now(tz=UTC)
+            claimed_actor.poll_attempts += 1
+            db.add(claimed_actor)
+            db.commit()
             try:
                 results[actor] = self.poll_all(db, actor)
             except SourceHutClientError:
@@ -73,17 +92,25 @@ class PollerService:
 
     def track_actor_request(self, db: Session, actor: str, *, update_last_requested: bool = True) -> TrackedActor:
         tracked_actor = db.scalar(select(TrackedActor).where(TrackedActor.actor == actor))
+        now = datetime.now(tz=UTC)
         if tracked_actor is None:
             tracked_actor = TrackedActor(
                 actor=actor,
                 is_active=True,
+                discovery_state="queued",
+                queued_for_discovery_at=now,
+                next_poll_after=now,
                 recent_backfill_status="pending",
             )
             db.add(tracked_actor)
 
         tracked_actor.is_active = True
+        if tracked_actor.queued_for_discovery_at is None:
+            tracked_actor.queued_for_discovery_at = now
+        if tracked_actor.next_poll_after is None:
+            tracked_actor.next_poll_after = now
         if update_last_requested:
-            tracked_actor.last_requested_at = datetime.now(tz=UTC)
+            tracked_actor.last_requested_at = now
         db.flush()
         return tracked_actor
 
@@ -175,8 +202,16 @@ class PollerService:
         tracked_actor = self.track_actor_request(db, actor, update_last_requested=False)
         tracked_actor.last_poll_status = status
         tracked_actor.last_poll_error = error
+        now = datetime.now(tz=UTC)
         if status == "indexed":
-            tracked_actor.last_polled_at = datetime.now(tz=UTC)
+            tracked_actor.discovery_state = "indexed"
+            tracked_actor.last_polled_at = now
+            tracked_actor.next_poll_after = now + timedelta(seconds=self.settings.indexed_actor_repoll_seconds)
+        elif status == "error":
+            tracked_actor.discovery_state = "error"
+            tracked_actor.next_poll_after = now + timedelta(
+                seconds=self.settings.discovery_error_backoff_seconds * max(tracked_actor.poll_attempts, 1)
+            )
         db.add(tracked_actor)
         db.flush()
 

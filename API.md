@@ -52,6 +52,7 @@ Background polling:
 - When `ENABLE_SCHEDULER=true`, the service runs one poll immediately at startup and then continues polling on `POLL_INTERVAL_SECONDS`.
 - The scheduler always seeds `DEFAULT_ACTOR` as a known actor.
 - Public contribution reads register additional actors for later background polling.
+- The scheduler only processes due actors, up to `DISCOVERY_BATCH_SIZE` per pass.
 - Manual polling remains available through `POST /api/contributions/poll`.
 
 Repository names:

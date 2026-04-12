@@ -1,10 +1,12 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import select
 
 from srht_contrib.config import Settings
 from srht_contrib.jobs.poller import PollerService
 from srht_contrib.models import ContributionEvent, ServiceBackfillState, SyncState, TrackedActor, TrackedRepository
+from srht_contrib.scripts.enqueue_actors import enqueue_actors
 from srht_contrib.schemas import NormalizedEvent
 from srht_contrib.services.git import GitIngestionService, GitPollResult
 from srht_contrib.services.todo import TodoIngestionService, TodoPollResult
@@ -64,7 +66,7 @@ class EmptyGitService:
             POLL_INTERVAL_SECONDS=60,
         )
 
-    def fetch_recent_events(self, actor: str, since: datetime | None = None, repositories=None) -> GitPollResult:
+    def fetch_recent_events(self, actor: str, since: datetime | None = None, repositories=None, db=None) -> GitPollResult:
         return GitPollResult(events=[], cursor="2026-03-31T00:00:00+00:00")
 
     def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
@@ -156,7 +158,7 @@ class QueueShrinkingGitService:
             POLL_INTERVAL_SECONDS=60,
         )
 
-    def fetch_recent_events(self, actor: str, since: datetime | None = None, repositories=None) -> GitPollResult:
+    def fetch_recent_events(self, actor: str, since: datetime | None = None, repositories=None, db=None) -> GitPollResult:
         return GitPollResult(events=[], cursor=datetime(2026, 3, 31, tzinfo=UTC).isoformat())
 
     def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
@@ -530,7 +532,7 @@ def test_sync_overlap_reuses_cursor_window_and_suppresses_duplicates(db_session)
     assert second_inserted == 0
     assert state is not None
     assert len(todo_service.calls) == 2
-    assert todo_service.calls[1].isoformat() == "2026-03-30T00:00:00+00:00"
+    assert todo_service.calls[1].isoformat() == "2026-03-30T23:00:00+00:00"
 
 
 def test_scheduled_poll_polls_known_actors_and_seeds_default_actor(db_session) -> None:
@@ -556,7 +558,7 @@ def test_scheduled_poll_polls_known_actors_and_seeds_default_actor(db_session) -
 
     tracked_actors = db_session.scalars(select(TrackedActor).order_by(TrackedActor.actor)).all()
 
-    assert results == {"~default": 0, "~known": 1}
+    assert results == {"~default": 1, "~known": 0}
     assert [actor.actor for actor in tracked_actors] == ["~default", "~known"]
     assert all(actor.last_poll_status == "indexed" for actor in tracked_actors)
     assert all(actor.last_polled_at is not None for actor in tracked_actors)
@@ -655,3 +657,84 @@ def test_prune_old_events_removes_data_older_than_one_year(db_session) -> None:
 
     assert deleted == 1
     assert remaining == ["todo:recent"]
+
+
+def test_poll_tracked_actors_limits_to_due_batch_size(db_session) -> None:
+    settings = make_settings(DISCOVERY_BATCH_SIZE=2, INDEXED_ACTOR_REPOLL_SECONDS=3600)
+    todo_service = RecordingTodoService(events_by_call=[[], []])
+    git_service = EmptyGitService()
+    poller = PollerService(todo_service=todo_service, git_service=git_service, settings=settings)
+
+    now = datetime.now(tz=UTC)
+    db_session.add_all(
+        [
+            TrackedActor(
+                actor="~a",
+                is_active=True,
+                discovery_state="queued",
+                queued_for_discovery_at=now - timedelta(minutes=3),
+                next_poll_after=now - timedelta(minutes=3),
+                recent_backfill_status="completed",
+            ),
+            TrackedActor(
+                actor="~b",
+                is_active=True,
+                discovery_state="queued",
+                queued_for_discovery_at=now - timedelta(minutes=2),
+                next_poll_after=now - timedelta(minutes=2),
+                recent_backfill_status="completed",
+            ),
+            TrackedActor(
+                actor="~c",
+                is_active=True,
+                discovery_state="queued",
+                queued_for_discovery_at=now - timedelta(minutes=1),
+                next_poll_after=now - timedelta(minutes=1),
+                recent_backfill_status="completed",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    results = poller.poll_tracked_actors(db_session)
+
+    assert set(results) == {"~a", "~b"}
+    actors = {
+        actor.actor: actor
+        for actor in db_session.scalars(select(TrackedActor).order_by(TrackedActor.actor)).all()
+    }
+    assert actors["~a"].discovery_state == "indexed"
+    assert actors["~b"].discovery_state == "indexed"
+    assert actors["~c"].discovery_state == "queued"
+    assert actors["~a"].poll_attempts == 1
+    assert actors["~b"].poll_attempts == 1
+    assert actors["~c"].poll_attempts == 0
+
+
+def test_enqueue_actors_staggers_without_polling(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "enqueue.db"
+    username_path = tmp_path / "srht_usernames.txt"
+    username_path.write_text("alice\nbob\nalice\n~carol\n", encoding="utf-8")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("SRHT_TOKEN", "test-token")
+    monkeypatch.setenv("DEFAULT_ACTOR", "~ccleberg")
+
+    from srht_contrib.db import Base, make_engine, make_session_factory
+
+    settings = Settings()
+    engine = make_engine(settings)
+    Base.metadata.create_all(bind=engine)
+    session_factory = make_session_factory(settings)
+    queued_at = datetime(2026, 4, 11, 12, 0, tzinfo=UTC)
+
+    inserted = enqueue_actors(Path(username_path), stagger_seconds=60, start_at=queued_at)
+
+    with session_factory() as db:
+        actors = db.scalars(select(TrackedActor).order_by(TrackedActor.actor)).all()
+
+    assert inserted == 3
+    assert [actor.actor for actor in actors] == ["~alice", "~bob", "~carol"]
+    assert all(actor.discovery_state == "queued" for actor in actors)
+    assert actors[0].next_poll_after == queued_at.replace(tzinfo=None)
+    assert actors[1].next_poll_after == (queued_at + timedelta(seconds=60)).replace(tzinfo=None)
+    assert actors[2].next_poll_after == (queued_at + timedelta(seconds=120)).replace(tzinfo=None)
