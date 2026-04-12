@@ -55,6 +55,7 @@ query UserRepositories($username: String!, $cursor: Cursor) {
     repositories(cursor: $cursor) {
       results {
         name
+        visibility
         owner {
           canonicalName
         }
@@ -173,6 +174,8 @@ class GitIngestionService:
             for repository in results:
                 if not isinstance(repository, dict):
                     continue
+                if repository.get("visibility") != "PUBLIC":
+                    continue
                 name = repository.get("name")
                 repository_owner = ((repository.get("owner") or {}).get("canonicalName") or actor).strip()
                 if not name or not repository_owner:
@@ -258,6 +261,8 @@ class GitIngestionService:
 
             for repository in results:
                 if not isinstance(repository, dict):
+                    continue
+                if repository.get("visibility") != "PUBLIC":
                     continue
                 name = repository.get("name")
                 repository_owner = ((repository.get("owner") or {}).get("canonicalName") or actor).strip()
