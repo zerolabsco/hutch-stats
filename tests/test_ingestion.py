@@ -210,7 +210,7 @@ def test_todo_ingestion_is_idempotent(db_session) -> None:
             "results": [
                 {
                     "id": "1001",
-                    "created": "2026-03-29T10:00:00Z",
+                    "created": "2026-05-01T10:00:00Z",
                     "ticket": {
                         "id": "123",
                         "ref": "~ccleberg/todo/123",
@@ -229,7 +229,7 @@ def test_todo_ingestion_is_idempotent(db_session) -> None:
                 },
                 {
                     "id": "1002",
-                    "created": "2026-03-30T09:00:00Z",
+                    "created": "2026-05-02T09:00:00Z",
                     "ticket": {
                         "id": "123",
                         "ref": "~ccleberg/todo/123",
@@ -248,7 +248,7 @@ def test_todo_ingestion_is_idempotent(db_session) -> None:
                 },
                 {
                     "id": "1003",
-                    "created": "2026-03-30T10:00:00Z",
+                    "created": "2026-05-02T10:00:00Z",
                     "ticket": {
                         "id": "123",
                         "ref": "~ccleberg/todo/123",
@@ -505,6 +505,55 @@ def test_git_ingestion_auto_discovers_owned_repositories(db_session) -> None:
 
     assert inserted == 1
     assert any("query UserRepositories" in call[0] for call in client.calls)
+
+
+def test_git_ingestion_reads_repository_log_from_default_head_branch(db_session) -> None:
+    settings = make_settings(
+        ACTOR_ALIASES_JSON={"~ccleberg": ["cmc@example.com", "Chris Cleberg"]},
+        GIT_TRACKED_REPOSITORIES=["Hutch"],
+    )
+    git_payload = {
+        "user": {
+            "repository": {
+                "name": "Hutch",
+                "owner": {"canonicalName": "~ccleberg"},
+                "HEAD": {"name": "refs/heads/trunk", "target": "abc123"},
+                "log": {
+                    "results": [
+                        {
+                            "id": "abc123",
+                            "shortId": "abc123",
+                            "author": {
+                                "name": "Chris Cleberg",
+                                "email": "cmc@example.com",
+                                "time": "2026-03-30T12:00:00Z",
+                            },
+                            "committer": {
+                                "name": "Chris Cleberg",
+                                "email": "cmc@example.com",
+                                "time": "2026-03-30T12:00:00Z",
+                            },
+                            "message": "Commit on non-standard default branch",
+                        }
+                    ],
+                    "cursor": None,
+                },
+            }
+        }
+    }
+    client = StubClient(payloads_by_query={"query RepositoryLog": git_payload})
+    git_service = GitIngestionService(client, settings)
+
+    result = git_service.fetch_recent_events("~ccleberg", since=datetime(2026, 3, 1, tzinfo=UTC))
+
+    repository_log_calls = [call for call in client.calls if "query RepositoryLog" in call[0]]
+    assert len(result.events) == 1
+    assert repository_log_calls[0][1] == {
+        "username": "ccleberg",
+        "repoName": "Hutch",
+        "cursor": None,
+        "from": "HEAD",
+    }
 
 
 def test_sync_overlap_reuses_cursor_window_and_suppresses_duplicates(db_session) -> None:

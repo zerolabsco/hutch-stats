@@ -22,14 +22,18 @@ logger = logging.getLogger(__name__)
 
 
 REPOSITORY_LOG_QUERY = """
-query RepositoryLog($username: String!, $repoName: String!, $cursor: Cursor) {
+query RepositoryLog($username: String!, $repoName: String!, $cursor: Cursor, $from: String) {
   user(username: $username) {
     repository(name: $repoName) {
       name
       owner {
         canonicalName
       }
-      log(cursor: $cursor) {
+      HEAD {
+        name
+        target
+      }
+      log(cursor: $cursor, from: $from) {
         results {
           id
           shortId
@@ -235,7 +239,12 @@ class GitIngestionService:
         owner, repo_name = self._split_repository(actor, repository_name)
         data = self.client.execute(
             REPOSITORY_LOG_QUERY,
-            {"username": owner, "repoName": repo_name, "cursor": state["current_repository"]["cursor"]},
+            {
+                "username": owner,
+                "repoName": repo_name,
+                "cursor": state["current_repository"]["cursor"],
+                "from": "HEAD",
+            },
         )
         user = data.get("user") or {}
         repository = user.get("repository") or {}
@@ -353,7 +362,7 @@ class GitIngestionService:
         for _ in range(50):
             data = self.client.execute(
                 REPOSITORY_LOG_QUERY,
-                {"username": owner, "repoName": repo_name, "cursor": cursor},
+                {"username": owner, "repoName": repo_name, "cursor": cursor, "from": "HEAD"},
             )
             user = data.get("user") or {}
             repository = user.get("repository") or {}

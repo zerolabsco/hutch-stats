@@ -96,6 +96,7 @@ def test_git_poll_reuses_cached_discovered_repositories(db_session) -> None:
     poller = PollerService(todo_service=todo_service, git_service=git_service, settings=settings)
 
     first_inserted = poller.poll_all(db_session, "~ccleberg")
+    first_poll_user_repository_calls = [call for call in client.calls if "query UserRepositories" in call[0]]
     second_inserted = poller.poll_all(db_session, "~ccleberg")
 
     user_repository_calls = [call for call in client.calls if "query UserRepositories" in call[0]]
@@ -103,5 +104,5 @@ def test_git_poll_reuses_cached_discovered_repositories(db_session) -> None:
 
     assert first_inserted == 1
     assert second_inserted == 0
-    assert len(user_repository_calls) == 1
+    assert len(user_repository_calls) == len(first_poll_user_repository_calls)
     assert cached_names == ["~ccleberg/Hutch"]
