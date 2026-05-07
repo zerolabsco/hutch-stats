@@ -40,7 +40,7 @@ def _iter_usernames(path: Path) -> list[str]:
     return usernames
 
 
-def enqueue_actors(username_file: Path, *, stagger_seconds: int = 300, start_at: datetime | None = None) -> int:
+def enqueue_actors(username_file: Path, *, stagger_seconds: int = 60, start_at: datetime | None = None) -> int:
     settings = Settings()
     session_factory = make_session_factory(settings)
     usernames = _iter_usernames(username_file)
@@ -95,7 +95,7 @@ def main() -> None:
     parser.add_argument(
         "--stagger-seconds",
         type=int,
-        default=300,
+        default=60,
         help="Seconds to space out each actor's first eligible poll time.",
     )
     args = parser.parse_args()

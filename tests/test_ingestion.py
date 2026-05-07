@@ -9,6 +9,7 @@ from srht_contrib.models import ContributionEvent, ServiceBackfillState, SyncSta
 from srht_contrib.scripts.enqueue_actors import enqueue_actors
 from srht_contrib.schemas import NormalizedEvent
 from srht_contrib.services.git import GitIngestionService, GitPollResult
+from srht_contrib.services.srht_client import SourceHutClientError
 from srht_contrib.services.todo import TodoIngestionService, TodoPollResult
 from srht_contrib.services.types import BackfillBatchResult
 
@@ -110,6 +111,25 @@ class BackfillingTodoService:
         since: datetime,
     ) -> BackfillBatchResult:
         return self.fetch_backfill_batch(actor, cursor_state)
+
+
+class FailingTodoService:
+    service_name = "todo"
+
+    def fetch_recent_events(self, actor: str, since: datetime | None = None) -> TodoPollResult:
+        raise SourceHutClientError("temporary upstream failure")
+
+    def fetch_backfill_batch(self, actor: str, cursor_state: dict | None = None) -> BackfillBatchResult:
+        return BackfillBatchResult(events=[], cursor_state=None, complete=True)
+
+    def fetch_recent_backfill_batch(
+        self,
+        actor: str,
+        cursor_state: dict | None = None,
+        *,
+        since: datetime,
+    ) -> BackfillBatchResult:
+        return BackfillBatchResult(events=[], cursor_state=None, complete=True)
 
 
 class QueueShrinkingTodoService:
@@ -658,6 +678,50 @@ def test_poll_marks_backfill_complete_and_persists_service_state(db_session) -> 
     assert all(state.status == "completed" for state in service_states)
 
 
+def test_scheduled_poll_indexes_before_draining_recent_backfill(db_session) -> None:
+    settings = make_settings(DISCOVERY_BATCH_SIZE=1, INDEXED_ACTOR_REPOLL_SECONDS=3600)
+    poller = PollerService(todo_service=BackfillingTodoService(), git_service=EmptyGitService(), settings=settings)
+    now = datetime.now(tz=UTC)
+    db_session.add(
+        TrackedActor(
+            actor="~ccleberg",
+            is_active=True,
+            discovery_state="queued",
+            queued_for_discovery_at=now - timedelta(minutes=1),
+            next_poll_after=now - timedelta(minutes=1),
+            recent_backfill_status="pending",
+        )
+    )
+    db_session.commit()
+
+    first_results = poller.poll_tracked_actors(db_session)
+    service_states_after_first_poll = db_session.scalars(select(ServiceBackfillState)).all()
+    tracked_after_first_poll = db_session.scalar(select(TrackedActor).where(TrackedActor.actor == "~ccleberg"))
+
+    assert first_results == {"~ccleberg": 0}
+    assert service_states_after_first_poll == []
+    assert tracked_after_first_poll is not None
+    assert tracked_after_first_poll.discovery_state == "indexed"
+    assert tracked_after_first_poll.recent_backfill_status == "pending"
+    assert tracked_after_first_poll.next_poll_after is not None
+    first_due_at = tracked_after_first_poll.next_poll_after
+    if first_due_at.tzinfo is None:
+        first_due_at = first_due_at.replace(tzinfo=UTC)
+    assert first_due_at <= datetime.now(tz=UTC)
+
+    second_results = poller.poll_tracked_actors(db_session)
+
+    tracked_after_second_poll = db_session.scalar(select(TrackedActor).where(TrackedActor.actor == "~ccleberg"))
+    service_states_after_second_poll = db_session.scalars(
+        select(ServiceBackfillState).order_by(ServiceBackfillState.scope, ServiceBackfillState.service)
+    ).all()
+
+    assert second_results == {"~ccleberg": 1}
+    assert tracked_after_second_poll is not None
+    assert tracked_after_second_poll.recent_backfill_status == "completed"
+    assert [f"{state.scope}:{state.service}" for state in service_states_after_second_poll] == ["recent:git", "recent:todo"]
+
+
 def test_backfill_cursor_state_shrinks_across_repeated_polls(db_session) -> None:
     settings = make_settings()
     poller = PollerService(
@@ -779,9 +843,59 @@ def test_poll_tracked_actors_limits_to_due_batch_size(db_session) -> None:
     assert actors["~a"].discovery_state == "indexed"
     assert actors["~b"].discovery_state == "indexed"
     assert actors["~c"].discovery_state == "queued"
-    assert actors["~a"].poll_attempts == 1
-    assert actors["~b"].poll_attempts == 1
+    assert actors["~a"].poll_attempts == 0
+    assert actors["~b"].poll_attempts == 0
     assert actors["~c"].poll_attempts == 0
+
+
+def test_scheduled_error_backoff_is_capped_and_success_resets_attempts(db_session) -> None:
+    settings = make_settings(
+        DISCOVERY_BATCH_SIZE=1,
+        DISCOVERY_ERROR_BACKOFF_SECONDS=3600,
+        DISCOVERY_ERROR_BACKOFF_MAX_SECONDS=7200,
+    )
+    now = datetime.now(tz=UTC)
+    db_session.add(
+        TrackedActor(
+            actor="~flaky",
+            is_active=True,
+            discovery_state="queued",
+            queued_for_discovery_at=now - timedelta(minutes=1),
+            next_poll_after=now - timedelta(minutes=1),
+            poll_attempts=10,
+            recent_backfill_status="completed",
+        )
+    )
+    db_session.commit()
+    failing_poller = PollerService(todo_service=FailingTodoService(), git_service=EmptyGitService(), settings=settings)
+
+    failing_poller.poll_tracked_actors(db_session)
+
+    failed_actor = db_session.scalar(select(TrackedActor).where(TrackedActor.actor == "~flaky"))
+    assert failed_actor is not None
+    assert failed_actor.discovery_state == "error"
+    assert failed_actor.poll_attempts == 11
+    assert failed_actor.next_poll_after is not None
+    failed_next_poll_after = failed_actor.next_poll_after
+    if failed_next_poll_after.tzinfo is None:
+        failed_next_poll_after = failed_next_poll_after.replace(tzinfo=UTC)
+    assert failed_next_poll_after <= datetime.now(tz=UTC) + timedelta(seconds=7200, minutes=1)
+
+    failed_actor.next_poll_after = datetime.now(tz=UTC)
+    db_session.add(failed_actor)
+    db_session.commit()
+    successful_poller = PollerService(
+        todo_service=RecordingTodoService(events_by_call=[[]]),
+        git_service=EmptyGitService(),
+        settings=settings,
+    )
+
+    successful_poller.poll_tracked_actors(db_session)
+
+    recovered_actor = db_session.scalar(select(TrackedActor).where(TrackedActor.actor == "~flaky"))
+    assert recovered_actor is not None
+    assert recovered_actor.discovery_state == "indexed"
+    assert recovered_actor.poll_attempts == 0
 
 
 def test_track_actor_request_prioritize_marks_actor_boosted_and_due_now(db_session) -> None:

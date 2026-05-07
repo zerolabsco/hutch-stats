@@ -54,6 +54,7 @@ Background polling:
 - The scheduler always seeds `DEFAULT_ACTOR` as a known actor.
 - Public contribution reads register additional actors for later background polling.
 - The scheduler only processes due actors, up to `DISCOVERY_BATCH_SIZE` per pass.
+- Scheduled first indexing skips bounded one-year backfill work, then drains backfill in later scheduled passes so newly requested actors become indexed sooner.
 - Manual polling remains available through `POST /api/contributions/poll`.
 
 Repository names:

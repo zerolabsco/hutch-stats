@@ -86,6 +86,7 @@ Environment variables:
 - `DISCOVERY_BATCH_SIZE`: max number of due actors to process per scheduler pass
 - `INDEXED_ACTOR_REPOLL_SECONDS`: how long to wait before re-polling an already indexed actor
 - `DISCOVERY_ERROR_BACKOFF_SECONDS`: base retry delay after a failed scheduled poll
+- `DISCOVERY_ERROR_BACKOFF_MAX_SECONDS`: maximum retry delay after repeated scheduled poll failures
 - `ACTOR_ALIASES_JSON`: optional JSON object for actor/email/display-name alias mapping
 - `GIT_TRACKED_REPOSITORIES`: optional JSON array of repository names or `owner/repo` strings to union into git polling
 
@@ -99,10 +100,11 @@ TODO_SRHT_ENDPOINT=https://todo.sr.ht/query
 GIT_SRHT_ENDPOINT=https://git.sr.ht/query
 DATABASE_URL=sqlite:///./srht_contrib.db
 DEFAULT_ACTOR=~your-user
-POLL_INTERVAL_SECONDS=900
-DISCOVERY_BATCH_SIZE=5
+POLL_INTERVAL_SECONDS=300
+DISCOVERY_BATCH_SIZE=20
 INDEXED_ACTOR_REPOLL_SECONDS=21600
 DISCOVERY_ERROR_BACKOFF_SECONDS=3600
+DISCOVERY_ERROR_BACKOFF_MAX_SECONDS=21600
 ACTOR_ALIASES_JSON={"~your-user":["you@example.com","Your Name"]}
 GIT_TRACKED_REPOSITORIES=["your-repo","~your-user/your-site"]
 ```
@@ -173,7 +175,7 @@ Example response:
 
 Scheduled polling only runs when `ENABLE_SCHEDULER=true`. The scheduler seeds `DEFAULT_ACTOR` as an initial known actor, runs one poll immediately at startup, and public contribution reads register additional actors for later background polling and one-year backfill.
 
-The scheduler now drains actors gradually instead of polling every tracked actor on every pass. It only claims due actors, up to `DISCOVERY_BATCH_SIZE` per run, then reschedules indexed actors with `INDEXED_ACTOR_REPOLL_SECONDS` and failed actors with backoff based on `DISCOVERY_ERROR_BACKOFF_SECONDS`.
+The scheduler now drains actors gradually instead of polling every tracked actor on every pass. It only claims due actors, up to `DISCOVERY_BATCH_SIZE` per run, performs a fast first indexing pass before bounded one-year backfill work, then reschedules indexed actors with `INDEXED_ACTOR_REPOLL_SECONDS` and failed actors with capped backoff based on `DISCOVERY_ERROR_BACKOFF_SECONDS`.
 
 Clients can explicitly signal that a public contribution read is for the signed-in user's own graph by sending `prioritize_self=true` on the read request. That temporarily boosts the actor to the front of the due queue for the next indexing pass, then clears the boost after the poll completes.
 
@@ -182,10 +184,10 @@ Clients can explicitly signal that a public contribution read is for the signed-
 To durably queue a large username list without polling it immediately:
 
 ```bash
-srht-enqueue-actors srht_usernames.txt --stagger-seconds 300
+srht-enqueue-actors srht_usernames.txt --stagger-seconds 60
 ```
 
-This command stores usernames in `tracked_actors`, marks them queued, and spaces out their first eligible poll time. With `--stagger-seconds 300`, a file of 15,771 users will be spread across roughly 54.8 days before becoming due for first poll.
+This command stores usernames in `tracked_actors`, marks them queued, and spaces out their first eligible poll time. With `--stagger-seconds 60`, a file of 15,771 users will be spread across roughly 11 days before becoming due for first poll.
 
 For `git.sr.ht`, owned repositories are auto-discovered for the actor. `GIT_TRACKED_REPOSITORIES` can still be used to union in extra repositories. Entries may be either:
 
