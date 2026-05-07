@@ -40,6 +40,19 @@ def make_settings(**overrides) -> Settings:
     return Settings(**values)
 
 
+def branch_payload(*branches: str) -> dict:
+    return {
+        "user": {
+            "repository": {
+                "references": {
+                    "results": [{"name": branch, "target": "abc123"} for branch in branches],
+                    "cursor": None,
+                }
+            }
+        }
+    }
+
+
 def test_git_poll_reuses_cached_discovered_repositories(db_session) -> None:
     settings = make_settings()
     client = StubClient(
@@ -58,6 +71,7 @@ def test_git_poll_reuses_cached_discovered_repositories(db_session) -> None:
                     }
                 }
             },
+            "query RepositoryBranches": branch_payload("refs/heads/main"),
             "query RepositoryLog": {
                 "user": {
                     "repository": {

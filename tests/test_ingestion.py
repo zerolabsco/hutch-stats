@@ -202,6 +202,19 @@ def make_settings(**overrides) -> Settings:
     return Settings(**values)
 
 
+def branch_payload(*branches: str) -> dict:
+    return {
+        "user": {
+            "repository": {
+                "references": {
+                    "results": [{"name": branch, "target": "abc123"} for branch in branches],
+                    "cursor": None,
+                }
+            }
+        }
+    }
+
+
 def test_todo_ingestion_is_idempotent(db_session) -> None:
     settings = make_settings()
     payload = {
@@ -431,7 +444,15 @@ def test_git_ingestion_normalizes_commit_aliases_and_repository_names(db_session
         StubClient(payload={"me": {"canonicalName": "~ccleberg"}, "events": {"results": [], "cursor": None}}),
         settings,
     )
-    git_service = GitIngestionService(StubClient(payloads_by_query={"query RepositoryLog": git_payload}), settings)
+    git_service = GitIngestionService(
+        StubClient(
+            payloads_by_query={
+                "query RepositoryBranches": branch_payload("refs/heads/main"),
+                "query RepositoryLog": git_payload,
+            }
+        ),
+        settings,
+    )
     poller = PollerService(todo_service=todo_service, git_service=git_service, settings=settings)
 
     inserted = poller.poll_all(db_session, "~ccleberg")
@@ -463,6 +484,7 @@ def test_git_ingestion_auto_discovers_owned_repositories(db_session) -> None:
                     }
                 }
             },
+            "query RepositoryBranches": branch_payload("refs/heads/main"),
             "query RepositoryLog": {
                 "user": {
                     "repository": {
@@ -507,53 +529,55 @@ def test_git_ingestion_auto_discovers_owned_repositories(db_session) -> None:
     assert any("query UserRepositories" in call[0] for call in client.calls)
 
 
-def test_git_ingestion_reads_repository_log_from_default_head_branch(db_session) -> None:
+def test_git_ingestion_reads_repository_logs_from_all_branches(db_session) -> None:
     settings = make_settings(
         ACTOR_ALIASES_JSON={"~ccleberg": ["cmc@example.com", "Chris Cleberg"]},
         GIT_TRACKED_REPOSITORIES=["Hutch"],
     )
-    git_payload = {
-        "user": {
-            "repository": {
-                "name": "Hutch",
-                "owner": {"canonicalName": "~ccleberg"},
-                "HEAD": {"name": "refs/heads/trunk", "target": "abc123"},
-                "log": {
-                    "results": [
-                        {
-                            "id": "abc123",
-                            "shortId": "abc123",
-                            "author": {
-                                "name": "Chris Cleberg",
-                                "email": "cmc@example.com",
-                                "time": "2026-03-30T12:00:00Z",
-                            },
-                            "committer": {
-                                "name": "Chris Cleberg",
-                                "email": "cmc@example.com",
-                                "time": "2026-03-30T12:00:00Z",
-                            },
-                            "message": "Commit on non-standard default branch",
-                        }
-                    ],
-                    "cursor": None,
-                },
-            }
+    client = StubClient(
+        payloads_by_query={
+            "query RepositoryBranches": branch_payload(
+                "refs/heads/main",
+                "refs/heads/trunk",
+                "refs/tags/v1.0.0",
+            ),
+            "query RepositoryLog": {
+                "user": {
+                    "repository": {
+                        "name": "Hutch",
+                        "owner": {"canonicalName": "~ccleberg"},
+                        "log": {
+                            "results": [
+                                {
+                                    "id": "abc123",
+                                    "shortId": "abc123",
+                                    "author": {
+                                        "name": "Chris Cleberg",
+                                        "email": "cmc@example.com",
+                                        "time": "2026-03-30T12:00:00Z",
+                                    },
+                                    "committer": {
+                                        "name": "Chris Cleberg",
+                                        "email": "cmc@example.com",
+                                        "time": "2026-03-30T12:00:00Z",
+                                    },
+                                    "message": "Commit reachable from more than one branch",
+                                }
+                            ],
+                            "cursor": None,
+                        },
+                    }
+                }
+            },
         }
-    }
-    client = StubClient(payloads_by_query={"query RepositoryLog": git_payload})
+    )
     git_service = GitIngestionService(client, settings)
 
     result = git_service.fetch_recent_events("~ccleberg", since=datetime(2026, 3, 1, tzinfo=UTC))
 
     repository_log_calls = [call for call in client.calls if "query RepositoryLog" in call[0]]
     assert len(result.events) == 1
-    assert repository_log_calls[0][1] == {
-        "username": "ccleberg",
-        "repoName": "Hutch",
-        "cursor": None,
-        "from": "HEAD",
-    }
+    assert [call[1]["from"] for call in repository_log_calls] == ["refs/heads/main", "refs/heads/trunk"]
 
 
 def test_sync_overlap_reuses_cursor_window_and_suppresses_duplicates(db_session) -> None:
