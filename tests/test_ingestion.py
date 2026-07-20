@@ -237,13 +237,15 @@ def branch_payload(*branches: str) -> dict:
 
 def test_todo_ingestion_is_idempotent(db_session) -> None:
     settings = make_settings()
+    # The poller polls the last 30 days, so keep fixture events inside that window.
+    now = datetime.now(tz=UTC)
     payload = {
         "me": {"canonicalName": "~ccleberg"},
         "events": {
             "results": [
                 {
                     "id": "1001",
-                    "created": "2026-05-01T10:00:00Z",
+                    "created": (now - timedelta(days=3)).isoformat(),
                     "ticket": {
                         "id": "123",
                         "ref": "~ccleberg/todo/123",
@@ -262,7 +264,7 @@ def test_todo_ingestion_is_idempotent(db_session) -> None:
                 },
                 {
                     "id": "1002",
-                    "created": "2026-05-02T09:00:00Z",
+                    "created": (now - timedelta(days=2, hours=1)).isoformat(),
                     "ticket": {
                         "id": "123",
                         "ref": "~ccleberg/todo/123",
@@ -281,7 +283,7 @@ def test_todo_ingestion_is_idempotent(db_session) -> None:
                 },
                 {
                     "id": "1003",
-                    "created": "2026-05-02T10:00:00Z",
+                    "created": (now - timedelta(days=2)).isoformat(),
                     "ticket": {
                         "id": "123",
                         "ref": "~ccleberg/todo/123",
