@@ -1,0 +1,86 @@
+┌──────────────────────────────────────────────────────────────┐
+│  H U T C H - S T A T S                     [ KRZ ]   krz.sh  │
+└──────────────────────────────────────────────────────────────┘
+
+WHAT
+  srht-contrib. python service. polls sourcehut activity, normalizes
+  it into one event model, stores it in sqlite, and serves a
+  contribution-calendar json api an ios app renders directly.
+
+  v1 scope:
+  - fastapi json api
+  - sqlite persistence
+  - polling ingestion
+  - full todo.sr.ht path
+  - git.sr.ht commit ingestion with repo auto-discovery
+  - public read-only endpoints, api-key auth for mutating routes
+  - alembic migrations
+
+DOES
+  collects activity from sr.ht graphql services, aggregates by day,
+  and returns zero-filled ranges so the client never patches missing
+  dates. polls incrementally, backfills the last 365 days for new
+  actors, prunes older activity.
+
+SERVICES
+  implemented: todo.sr.ht, git.sr.ht.
+  event types: ticket_created, ticket_comment, ticket_closed, commit.
+
+ENV
+      API_KEY=replace-me
+      ENABLE_SCHEDULER=false
+      SRHT_TOKEN=replace-me
+      TODO_SRHT_ENDPOINT=https://todo.sr.ht/query
+      GIT_SRHT_ENDPOINT=https://git.sr.ht/query
+      DATABASE_URL=sqlite:///./srht_contrib.db
+      DEFAULT_ACTOR=~your-user
+      POLL_INTERVAL_SECONDS=300
+
+  more knobs (discovery batch size, repoll and backoff intervals,
+  actor aliases, tracked repositories) live in config.py.
+
+RUN
+      uv venv
+      source .venv/bin/activate
+      uv pip install -e ".[dev]"
+      cp .env.example .env
+      alembic upgrade head
+      uvicorn srht_contrib.main:app --reload
+
+POLL
+  manual poll:
+
+      curl -X POST \
+        "http://127.0.0.1:8000/api/contributions/poll?actor=~your-user" \
+        -H "X-API-Key: replace-me"
+
+  scheduled polling runs only when ENABLE_SCHEDULER=true. it drains
+  due actors in batches, indexes fast, then backfills a year in
+  bounded passes.
+
+  bulk queue without immediate indexing:
+
+      srht-enqueue-actors srht_usernames.txt --stagger-seconds 60
+
+ENDPOINTS
+  calendar by year, calendar by date range, stats, and repository
+  crud. full request and response shapes are in API.txt.
+
+WEIGHTS
+  commit 1.0, ticket_created 1.0, ticket_comment 0.5,
+  ticket_closed 0.75, build_started 0.25, build_passed 0.25.
+
+TESTS
+      pytest
+
+LIMITS
+  - git polling assumes repos are discoverable via graphql
+  - the scheduler runs in-process, not distributed
+  - new actors index asynchronously; the first read may be empty
+  - rolling one-year window; older activity is not kept
+  - alias management is config-driven, no crud api yet
+  - trusted-operator v1, not a public multi-tenant service
+
+┌──────────────────────────────────────────────────────────────┐
+│  krz.sh                                                      │
+└──────────────────────────────────────────────────────────────┘
