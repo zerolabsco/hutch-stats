@@ -20,7 +20,7 @@ jobs:
       # uv is how the project is actually developed — uv.lock is committed and
       # is what dependabot updates, so CI must resolve through it rather than
       # pip-installing whatever is newest.
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
 
