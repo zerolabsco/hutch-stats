@@ -1,0 +1,35 @@
+name: Test
+
+# This service had no CI at all: 46 tests under tests/ that ran only when
+# someone remembered to. Six dependency bumps were merged in one sitting with
+# nothing verifying them, which is the failure this exists to prevent.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # uv is how the project is actually developed — uv.lock is committed and
+      # is what dependabot updates, so CI must resolve through it rather than
+      # pip-installing whatever is newest.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      # --locked, not --frozen. --frozen installs from the lockfile without
+      # looking at pyproject.toml, so a manifest that has drifted past its lock
+      # installs happily; --locked fails instead. Verified both ways against a
+      # deliberately drifted constraint.
+      - name: Install
+        run: uv sync --extra dev --locked
+
+      - name: Tests
+        run: uv run pytest -q
